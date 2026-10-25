@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Fraunces, Outfit } from "next/font/google";
 import { WalletProvider } from "@/components/WalletProvider";
 import { PollarAppProvider } from "@/components/PollarAppProvider";
+import { ToastProvider } from "@/components/ToastProvider";
 import "./globals.css";
 
 const fraunces = Fraunces({
@@ -35,7 +36,10 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         }
       >
         <WalletProvider>
-          <PollarAppProvider>{children}</PollarAppProvider>
+          <PollarAppProvider>
+            {children}
+            <ToastProvider />
+          </PollarAppProvider>
         </WalletProvider>
       </body>
     </html>

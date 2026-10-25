@@ -190,3 +190,34 @@ a {
   color: var(--danger);
   border-color: transparent;
 }
+
+.btn:disabled {
+  opacity: 0.55;
+  transform: none;
+  cursor: not-allowed;
+}
+
+.veil-toast {
+  font-family: var(--font-body) !important;
+  background: var(--panel) !important;
+  color: var(--cream) !important;
+  border: 1px solid var(--line) !important;
+  border-radius: 14px !important;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35) !important;
+}
+
+.veil-toast-progress {
+  background: var(--mint) !important;
+}
+
+.Toastify__toast--success {
+  border-color: rgba(61, 186, 140, 0.35) !important;
+}
+
+.Toastify__toast--error {
+  border-color: rgba(232, 106, 92, 0.4) !important;
+}
+
+.Toastify__toast--info {
+  border-color: rgba(224, 164, 90, 0.35) !important;
+}
