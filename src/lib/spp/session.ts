@@ -11,15 +11,20 @@
 import { sppAssetUrls, SPP_DEFAULT_BOOTNODE_URL, SPP_XLM_POOL_ID } from "./config";
 
 export type SppSession = {
-  client: Awaited<ReturnType<typeof createSppClient>>["client"];
-  account: Awaited<ReturnType<typeof createSppClient>>["account"];
-  pool: Awaited<ReturnType<typeof createSppClient>>["pool"];
+  // Client/account/pool come from the WASM SDK; keep loose to avoid circular typings.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  client: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  account: any;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  pool: any;
   poolContract: string;
   networkPassphrase: string;
 };
 
 type SharedRuntime = {
-  client: Awaited<ReturnType<typeof bootSharedRuntime>>["client"];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  client: any;
   networkPassphrase: string;
   rpcUrl: string;
 };
