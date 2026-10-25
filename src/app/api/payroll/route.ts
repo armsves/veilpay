@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getPayrollService } from "@/lib/confidential/payroll";
 import { formatUsdc } from "@/lib/confidential/solvency";
+import { getVeilNameRegistry, normalizeName, toFqdn } from "@/lib/stealth/nameservice";
 
 export async function GET() {
   const svc = getPayrollService();
@@ -27,6 +28,7 @@ export async function POST(req: Request) {
     action: string;
     amount?: string;
     name?: string;
+    veilName?: string;
     stellarAddress?: string;
     stealthMeta?: string;
     employeeId?: string;
@@ -34,6 +36,7 @@ export async function POST(req: Request) {
     payments?: Array<{ employeeId: string; amount: string }>;
     reason?: string;
     deltaUsdc?: string;
+    xlmAmount?: string;
   };
 
   const svc = getPayrollService();
@@ -45,11 +48,65 @@ export async function POST(req: Request) {
         return NextResponse.json({ ok: true, solvency: serializeSnap(snap) });
       }
       case "add_employee": {
+        let stellarAddress = body.stellarAddress?.trim() ?? "";
+        let veilName = body.veilName?.trim() || undefined;
+        let displayName = body.name?.trim() || undefined;
+
+        if (veilName || (displayName && !stellarAddress.startsWith("G"))) {
+          const raw = veilName || displayName || "";
+          const name = normalizeName(raw);
+          const record = getVeilNameRegistry().get(name);
+          if (!record) {
+            return NextResponse.json(
+              {
+                ok: false,
+                error: `${toFqdn(name)} is not registered — employee must claim it under Stealth names first`,
+              },
+              { status: 404 },
+            );
+          }
+          veilName = record.name;
+          stellarAddress = record.owner;
+          displayName = displayName || record.fqdn;
+        }
+
+        if (!stellarAddress.startsWith("G") || stellarAddress.length < 56) {
+          return NextResponse.json(
+            { ok: false, error: "Need a registered .veil name or a Stellar G… address" },
+            { status: 400 },
+          );
+        }
+
         const emp = svc.addEmployee({
-          name: body.name ?? "Employee",
-          stellarAddress: body.stellarAddress ?? "GDEMO",
+          name: displayName || veilName || "Employee",
+          veilName,
+          stellarAddress,
           stealthMeta: body.stealthMeta,
         });
+        return NextResponse.json({
+          ok: true,
+          employee: {
+            ...emp,
+            confidentialBalance: emp.confidentialBalance.toString(),
+            confidentialBalanceUsdc: formatUsdc(emp.confidentialBalance),
+          },
+        });
+      }
+      case "remove_employee": {
+        if (!body.employeeId) {
+          return NextResponse.json({ ok: false, error: "employeeId required" }, { status: 400 });
+        }
+        svc.removeEmployee(body.employeeId);
+        return NextResponse.json({ ok: true });
+      }
+      case "mark_spp_paid": {
+        if (!body.employeeId || !body.xlmAmount) {
+          return NextResponse.json(
+            { ok: false, error: "employeeId and xlmAmount required" },
+            { status: 400 },
+          );
+        }
+        const emp = svc.markSppPaid(body.employeeId, body.xlmAmount);
         return NextResponse.json({ ok: true, employee: emp });
       }
       case "pay": {

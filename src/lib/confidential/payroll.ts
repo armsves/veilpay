@@ -12,9 +12,14 @@ import { planConfidentialOfframp } from "../pollar/client";
 export type Employee = {
   id: string;
   name: string;
+  /** Human .veil handle (without TLD), e.g. alice */
+  veilName?: string;
+  /** Resolved Freighter / SPP owner G… address */
   stellarAddress: string;
   stealthMeta?: string;
   confidentialBalance: bigint; // demo ledger (not Pedersen — SDK proves on-chain)
+  /** Last private SPP payout amount (XLM), demo display */
+  lastSppPayXlm?: string;
 };
 
 export type PayrollRun = {
@@ -38,12 +43,37 @@ export class ConfidentialPayrollService {
   }
 
   addEmployee(input: Omit<Employee, "id" | "confidentialBalance">) {
+    const veil = input.veilName?.trim().toLowerCase().replace(/\.veil$/i, "");
+    if (veil) {
+      const dup = this.employees.find((e) => e.veilName === veil);
+      if (dup) throw new Error(`${veil}.veil is already on the payroll`);
+    }
+    const byAddr = this.employees.find(
+      (e) => e.stellarAddress === input.stellarAddress && input.stellarAddress.startsWith("G"),
+    );
+    if (byAddr && input.stellarAddress.length >= 56) {
+      throw new Error(`Address already listed as ${byAddr.name}`);
+    }
     const emp: Employee = {
       ...input,
+      veilName: veil || undefined,
       id: `emp_${Math.random().toString(36).slice(2, 9)}`,
       confidentialBalance: 0n,
     };
     this.employees.push(emp);
+    return emp;
+  }
+
+  removeEmployee(employeeId: string) {
+    const n = this.employees.length;
+    this.employees = this.employees.filter((e) => e.id !== employeeId);
+    if (this.employees.length === n) throw new Error("Employee not found");
+  }
+
+  markSppPaid(employeeId: string, xlmAmount: string) {
+    const emp = this.employees.find((e) => e.id === employeeId);
+    if (!emp) throw new Error("Employee not found");
+    emp.lastSppPayXlm = xlmAmount;
     return emp;
   }
 
