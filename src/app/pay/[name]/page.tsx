@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { WalletButton } from "@/components/WalletButton";
 import { useWallet } from "@/components/WalletProvider";
-import { horizonTxUrl, sendXlm } from "@/lib/stellar/send-xlm";
+import { explorerTxUrl, sendXlm } from "@/lib/stellar/send-xlm";
 
 type ResolveResult = {
   fqdn: string;
@@ -115,7 +115,7 @@ export default function PayByNamePage() {
         {txHash && (
           <div className="mt-6 panel border-[rgba(110,231,183,0.35)] p-4 text-sm text-[var(--mint)]">
             Sent {amount} XLM ·{" "}
-            <a className="underline" href={horizonTxUrl(txHash)} target="_blank" rel="noreferrer">
+            <a className="underline" href={explorerTxUrl(txHash)} target="_blank" rel="noreferrer">
               View transaction
             </a>
           </div>

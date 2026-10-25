@@ -1,16 +1,21 @@
 /**
- * Browser-side native XLM payment via Freighter + Horizon.
+ * Browser-side native XLM payment via Freighter + Stellar RPC.
  * New stealth addresses need CreateAccount (≥1 XLM); funded ones use Payment.
  */
 
 import {
   Asset,
   BASE_FEE,
-  Horizon,
   Operation,
   TransactionBuilder,
 } from "@stellar/stellar-sdk";
 import { currentNetwork } from "./config";
+import {
+  accountExists,
+  createRpcServer,
+  explorerTxUrl,
+  submitAndConfirm,
+} from "./rpc";
 import { signXdr } from "./wallet";
 
 export type SendXlmResult = {
@@ -20,7 +25,7 @@ export type SendXlmResult = {
   createdAccount: boolean;
 };
 
-/** Horizon-friendly fixed decimals (7). */
+/** Fixed 7-decimal amount string for classic ops. */
 export function formatXlmAmount(amount: string): string {
   const n = Number(amount);
   if (!Number.isFinite(n) || n <= 0) {
@@ -29,19 +34,8 @@ export function formatXlmAmount(amount: string): string {
   return (Math.round(n * 1e7) / 1e7).toFixed(7);
 }
 
-async function accountExists(horizon: Horizon.Server, address: string): Promise<boolean> {
-  try {
-    await horizon.loadAccount(address);
-    return true;
-  } catch (e) {
-    const err = e as { response?: { status?: number } };
-    if (err.response?.status === 404) return false;
-    throw e;
-  }
-}
-
 /**
- * Sign + submit a native XLM transfer from `from` (Freighter) to `to`.
+ * Sign + submit a native XLM transfer from `from` (Freighter) to `to` via RPC.
  */
 export async function sendXlm(opts: {
   from: string;
@@ -50,9 +44,9 @@ export async function sendXlm(opts: {
 }): Promise<SendXlmResult> {
   const amount = formatXlmAmount(opts.amount);
   const net = currentNetwork();
-  const horizon = new Horizon.Server(net.horizonUrl);
-  const source = await horizon.loadAccount(opts.from);
-  const exists = await accountExists(horizon, opts.to);
+  const server = createRpcServer();
+  const source = await server.getAccount(opts.from);
+  const exists = await accountExists(opts.to);
 
   if (!exists && Number(amount) < 1) {
     throw new Error("First payment to a new stealth address must be at least 1 XLM (create account)");
@@ -83,20 +77,14 @@ export async function sendXlm(opts: {
   const tx = builder.setTimeout(180).build();
   const signedXdr = await signXdr(tx.toXDR(), opts.from);
   const signed = TransactionBuilder.fromXDR(signedXdr, net.networkPassphrase);
-  const result = await horizon.submitTransaction(signed);
+  const { hash } = await submitAndConfirm(signed);
 
   return {
-    hash: result.hash,
+    hash,
     amount,
     to: opts.to,
     createdAccount: !exists,
   };
 }
 
-export function horizonTxUrl(hash: string) {
-  const net = currentNetwork();
-  const isTest = net.horizonUrl.includes("testnet");
-  return isTest
-    ? `https://stellar.expert/explorer/testnet/tx/${hash}`
-    : `https://stellar.expert/explorer/public/tx/${hash}`;
-}
+export { explorerTxUrl };

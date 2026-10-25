@@ -6,7 +6,7 @@ export const networkMode: NetworkMode =
 export const stellar = {
   testnet: {
     networkPassphrase: "Test SDF Network ; September 2015",
-    horizonUrl: process.env.NEXT_PUBLIC_HORIZON_URL ?? "https://horizon-testnet.stellar.org",
+    /** Stellar RPC (Horizon is EOL — do not use for apps) */
     rpcUrl: process.env.NEXT_PUBLIC_SOROBAN_RPC_URL ?? "https://soroban-testnet.stellar.org",
     /** Circle testnet USDC */
     usdcIssuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
@@ -14,8 +14,7 @@ export const stellar = {
   },
   mainnet: {
     networkPassphrase: "Public Global Stellar Network ; September 2015",
-    horizonUrl: "https://horizon.stellar.org",
-    rpcUrl: "https://rpc.mainnet.stellar.gateway.fm",
+    rpcUrl: process.env.NEXT_PUBLIC_SOROBAN_RPC_URL ?? "https://mainnet.sorobanrpc.com",
     usdcIssuer: "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
   },
 } as const;

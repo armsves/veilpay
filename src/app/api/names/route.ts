@@ -2,9 +2,7 @@ import { NextResponse } from "next/server";
 import {
   Asset,
   BASE_FEE,
-  Horizon,
   Keypair,
-  Networks,
   Operation,
   TransactionBuilder,
 } from "@stellar/stellar-sdk";
@@ -14,7 +12,8 @@ import {
   toFqdn,
   validateName,
 } from "@/lib/stealth/nameservice";
-import { currentNetwork, networkMode } from "@/lib/stellar/config";
+import { currentNetwork } from "@/lib/stellar/config";
+import { createRpcServer, fetchXlmBalance, submitAndConfirm } from "@/lib/stellar/rpc";
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
@@ -150,10 +149,8 @@ export async function POST(req: Request) {
         }
 
         const net = currentNetwork();
-        const passphrase =
-          networkMode === "mainnet" ? Networks.PUBLIC : Networks.TESTNET;
-        const server = new Horizon.Server(net.horizonUrl);
-        const source = await server.loadAccount(prepared.stealthAddress);
+        const server = createRpcServer();
+        const source = await server.getAccount(prepared.stealthAddress);
         // Leave ~1.5 XLM for base reserve + fee headroom on the burner; send rest to Freighter.
         const keep = 1.5;
         const sendAmount = Math.max(0, Math.floor((balance - keep) * 1e7) / 1e7);
@@ -168,7 +165,7 @@ export async function POST(req: Request) {
         const kp = Keypair.fromSecret(prepared.stealthSecret);
         const tx = new TransactionBuilder(source, {
           fee: BASE_FEE,
-          networkPassphrase: passphrase,
+          networkPassphrase: net.networkPassphrase,
         })
           .addOperation(
             Operation.payment({
@@ -182,7 +179,7 @@ export async function POST(req: Request) {
         tx.sign(kp);
 
         if (body.submit) {
-          const result = await server.submitTransaction(tx);
+          const { hash } = await submitAndConfirm(tx);
           registry.markSwept(body.owner, body.announcementId);
           return NextResponse.json({
             ok: true,
@@ -190,7 +187,7 @@ export async function POST(req: Request) {
             amountXlm: sendAmount,
             from: prepared.stealthAddress,
             to: prepared.destination,
-            hash: result.hash,
+            hash,
           });
         }
 
@@ -241,17 +238,3 @@ function publicRecord(
   };
 }
 
-async function fetchXlmBalance(address: string): Promise<number> {
-  try {
-    const net = currentNetwork();
-    const res = await fetch(`${net.horizonUrl}/accounts/${address}`);
-    if (!res.ok) return 0;
-    const data = (await res.json()) as {
-      balances?: Array<{ asset_type: string; balance: string }>;
-    };
-    const native = data.balances?.find((b) => b.asset_type === "native");
-    return native ? Number(native.balance) : 0;
-  } catch {
-    return 0;
-  }
-}
