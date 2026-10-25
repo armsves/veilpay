@@ -79,9 +79,9 @@ export default function StealthPage() {
       });
       const data = await res.json();
       if (!data.ok) throw new Error(data.error);
-      if (data.balanceXlm < 3) {
+      if (data.balanceXlm < 1.25) {
         setStatus(
-          `Stealth has ${data.balanceXlm} XLM — need ≥3 XLM to SPP-shield (≈2 XLM Soroban fee buffer + ≥1 XLM deposit).`,
+          `Stealth has ${data.balanceXlm} XLM — need ≳1.25 XLM to SPP-shield (1 XLM base reserve + small fee pad + deposit).`,
         );
         return;
       }
@@ -102,7 +102,7 @@ export default function StealthPage() {
         }),
       });
       setStatus(
-        `Shielded ${result.transferredXlm} XLM via SPP → your private balance (not a public Freighter payment). ~${result.leftoverXlm.toFixed(2)} XLM fee dust left on burner.`,
+        `Shielded ${result.transferredXlm} XLM via SPP → your private balance. ~${result.leftoverXlm.toFixed(2)} XLM base reserve remains on burner (protocol minimum).`,
       );
       await loadMyName();
     } catch (e) {
@@ -400,11 +400,11 @@ export default function StealthPage() {
                     <button
                       type="button"
                       className="btn btn-primary !py-1 !px-2.5 text-[10px]"
-                      disabled={busy || item.swept || item.balanceXlm < 3}
+                      disabled={busy || item.swept || item.balanceXlm < 1.25}
                       onClick={() => void sweepItem(item)}
                       title={
-                        item.balanceXlm < 3
-                          ? "Need ≥3 XLM for SPP shield + fee buffer"
+                        item.balanceXlm < 1.25
+                          ? "Need ≳1.25 XLM to shield"
                           : "SPP deposit + private transfer"
                       }
                     >

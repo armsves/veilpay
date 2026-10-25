@@ -185,8 +185,8 @@ export async function POST(req: Request) {
 
         for (const c of candidates) {
           const balanceXlm = await fetchXlmBalance(c.address);
-          // Need headroom for SPP Soroban fees (~2 XLM) + ≥1 XLM deposit.
-          if (balanceXlm >= 3) {
+          // Base reserve (~1 XLM) + small fee pad + min deposit.
+          if (balanceXlm >= 1.25) {
             ready.push({
               index: c.index,
               address: c.address,
@@ -201,7 +201,7 @@ export async function POST(req: Request) {
           ready,
           note:
             ready.length === 0
-              ? "No stealth addresses with ≥3 XLM (needed for SPP shield + fee buffer)."
+              ? "No stealth addresses with ≳1.25 XLM to SPP-shield."
               : `Prepared ${ready.length} address(es) for SPP shield — client deposits then private-transfers.`,
         });
       }
