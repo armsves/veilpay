@@ -14,8 +14,13 @@ export type Employee = {
   name: string;
   /** Human .veil handle (without TLD), e.g. alice */
   veilName?: string;
-  /** Resolved Freighter / SPP owner G… address */
+  /**
+   * Current one-time stealth G… from VNS resolve (fresh each resolve/pay).
+   * Not the Freighter owner — see {@link ownerAddress}.
+   */
   stellarAddress: string;
+  /** Freighter G… that owns the .veil name — used for SPP recipientLookup */
+  ownerAddress?: string;
   stealthMeta?: string;
   confidentialBalance: bigint; // demo ledger (not Pedersen — SDK proves on-chain)
   /** Last private SPP payout amount (XLM), demo display */
@@ -48,19 +53,32 @@ export class ConfidentialPayrollService {
       const dup = this.employees.find((e) => e.veilName === veil);
       if (dup) throw new Error(`${veil}.veil is already on the payroll`);
     }
-    const byAddr = this.employees.find(
-      (e) => e.stellarAddress === input.stellarAddress && input.stellarAddress.startsWith("G"),
+    const ownerKey = input.ownerAddress ?? input.stellarAddress;
+    const byOwner = this.employees.find(
+      (e) => (e.ownerAddress ?? e.stellarAddress) === ownerKey && ownerKey.startsWith("G"),
     );
-    if (byAddr && input.stellarAddress.length >= 56) {
-      throw new Error(`Address already listed as ${byAddr.name}`);
+    if (byOwner && ownerKey.length >= 56) {
+      throw new Error(`Address already listed as ${byOwner.name}`);
     }
     const emp: Employee = {
       ...input,
       veilName: veil || undefined,
+      ownerAddress: input.ownerAddress ?? (veil ? input.stellarAddress : undefined),
       id: `emp_${Math.random().toString(36).slice(2, 9)}`,
       confidentialBalance: 0n,
     };
     this.employees.push(emp);
+    return emp;
+  }
+
+  /** Replace the displayed pay-to stealth address (VNS fresh resolve). */
+  setStealthAddress(employeeId: string, stealthAddress: string) {
+    const emp = this.employees.find((e) => e.id === employeeId);
+    if (!emp) throw new Error("Employee not found");
+    if (!stealthAddress.startsWith("G") || stealthAddress.length < 56) {
+      throw new Error("Invalid stealth address");
+    }
+    emp.stellarAddress = stealthAddress;
     return emp;
   }
 

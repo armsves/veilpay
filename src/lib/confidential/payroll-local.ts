@@ -1,12 +1,15 @@
 /** Browser cache for payroll roster (server RAM resets on Vercel). */
 
-const KEY = "veilpay-payroll-roster-v1";
+const KEY = "veilpay-payroll-roster-v2";
 
 export type LocalEmployee = {
   id: string;
   name: string;
   veilName?: string;
+  /** Current one-time stealth pay address */
   stellarAddress: string;
+  /** Freighter owner G… (SPP lookup) */
+  ownerAddress?: string;
   confidentialBalanceUsdc?: string;
   lastSppPayXlm?: string;
 };

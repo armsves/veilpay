@@ -12,10 +12,17 @@ type Employee = {
   id: string;
   name: string;
   veilName?: string;
+  /** Current one-time stealth pay address from VNS */
   stellarAddress: string;
+  /** Freighter owner — SPP recipientLookup */
+  ownerAddress?: string;
   confidentialBalanceUsdc: string;
   lastSppPayXlm?: string;
 };
+
+function sppLookupAddress(e: Employee): string {
+  return e.ownerAddress ?? e.stellarAddress;
+}
 
 type Solvency = {
   assetsUsdc: string;
@@ -52,6 +59,7 @@ export default function PayrollPage() {
         name: e.name,
         veilName: e.veilName,
         stellarAddress: e.stellarAddress,
+        ownerAddress: e.ownerAddress,
         confidentialBalanceUsdc: e.confidentialBalanceUsdc,
         lastSppPayXlm: e.lastSppPayXlm,
       })),
@@ -82,7 +90,9 @@ export default function PayrollPage() {
               action: "add_employee",
               name: e.name,
               veilName: e.veilName,
-              stellarAddress: e.stellarAddress,
+              // Re-add by .veil so server mints a fresh stealth; pass owner for non-veil rows
+              stellarAddress: e.veilName ? undefined : e.stellarAddress,
+              ownerAddress: e.ownerAddress,
             }),
           });
           const d = await r.json();
@@ -92,6 +102,7 @@ export default function PayrollPage() {
               name: d.employee.name,
               veilName: d.employee.veilName ?? e.veilName,
               stellarAddress: d.employee.stellarAddress,
+              ownerAddress: d.employee.ownerAddress ?? e.ownerAddress,
               confidentialBalanceUsdc: "0",
               lastSppPayXlm: e.lastSppPayXlm,
             });
@@ -139,12 +150,25 @@ export default function PayrollPage() {
         name: data.employee.name,
         veilName: data.employee.veilName,
         stellarAddress: data.employee.stellarAddress,
+        ownerAddress: data.employee.ownerAddress,
         confidentialBalanceUsdc: data.employee.confidentialBalanceUsdc ?? "0",
       };
       persistRoster([...employees.filter((e) => e.id !== emp.id), emp]);
       setSelected(emp.id);
       setVeilInput("");
       setDisplayName("");
+    } else if (action === "fresh_stealth" && data.employee) {
+      persistRoster(
+        employees.map((e) =>
+          e.id === data.employee.id
+            ? {
+                ...e,
+                stellarAddress: data.employee.stellarAddress,
+                ownerAddress: data.employee.ownerAddress ?? e.ownerAddress,
+              }
+            : e,
+        ),
+      );
     } else if (action === "remove_employee") {
       persistRoster(employees.filter((e) => e.id !== extra.employeeId));
     } else {
@@ -203,27 +227,47 @@ export default function PayrollPage() {
     }
   }
 
+  async function mintFreshStealth(emp: Employee): Promise<Employee> {
+    if (!emp.veilName) return emp;
+    const data = await act("fresh_stealth", { employeeId: emp.id });
+    if (data?.ok && data.employee) {
+      const next: Employee = {
+        ...emp,
+        stellarAddress: data.employee.stellarAddress,
+        ownerAddress: data.employee.ownerAddress ?? emp.ownerAddress,
+      };
+      persistRoster(employees.map((e) => (e.id === emp.id ? next : e)));
+      push(
+        `Fresh stealth for ${emp.veilName}.veil → ${next.stellarAddress.slice(0, 6)}…${next.stellarAddress.slice(-4)}`,
+      );
+      return next;
+    }
+    return emp;
+  }
+
   async function paySelectedViaSpp() {
-    const emp = employees.find((e) => e.id === selected);
-    if (!emp || !spp) {
+    const emp0 = employees.find((e) => e.id === selected);
+    if (!emp0 || !spp) {
       setStatus({ ok: false, text: "Select an employee and Connect SPP first" });
       return;
     }
     setBusy(true);
     setStatus(null);
     try {
+      const emp = await mintFreshStealth(emp0);
       const stroops = xlmToStroops(payAmount);
+      const owner = sppLookupAddress(emp);
       push(`Looking up SPP keys for ${emp.veilName ? `${emp.veilName}.veil` : emp.name}…`);
-      const lookup = await spp.client.recipientLookup(emp.stellarAddress);
+      const lookup = await spp.client.recipientLookup(owner);
       if (!lookup?.entry) {
         throw new Error(
           `${emp.veilName ? `${emp.veilName}.veil` : emp.name} owner must open Private pay → Connect SPP once to register keys`,
         );
       }
       push(
-        `Private SPP pay ${payAmount} XLM → ${emp.veilName ? `${emp.veilName}.veil` : emp.name} (${emp.stellarAddress.slice(0, 6)}…)`,
+        `Private SPP pay ${payAmount} XLM → ${emp.veilName ? `${emp.veilName}.veil` : emp.name} (stealth ${emp.stellarAddress.slice(0, 6)}…)`,
       );
-      // Encrypt to the recipient's registered keys (same as Private pay transfer).
+      // Encrypt to the owner's registered SPP keys (amount hidden); roster shows fresh stealth.
       await spp.pool.transferToKeys(lookup.entry.noteKey, lookup.entry.encryptionKey, stroops);
       await act("mark_spp_paid", { employeeId: emp.id, xlmAmount: payAmount });
       // Also credit confidential demo ledger for solvency story
@@ -233,7 +277,7 @@ export default function PayrollPage() {
       setStatus({ ok: true, text: `Paid ${payAmount} XLM privately to ${emp.name}` });
       persistRoster(
         employees.map((e) =>
-          e.id === emp.id ? { ...e, lastSppPayXlm: payAmount } : e,
+          e.id === emp.id ? { ...e, ...emp, lastSppPayXlm: payAmount } : e,
         ),
       );
     } catch (e) {
@@ -253,9 +297,10 @@ export default function PayrollPage() {
     let okCount = 0;
     const next = [...employees];
     try {
-      for (const emp of employees) {
-        push(`Payroll → ${emp.veilName ? `${emp.veilName}.veil` : emp.name}…`);
-        const lookup = await spp.client.recipientLookup(emp.stellarAddress);
+      for (const emp0 of employees) {
+        push(`Payroll → ${emp0.veilName ? `${emp0.veilName}.veil` : emp0.name}…`);
+        const emp = await mintFreshStealth(emp0);
+        const lookup = await spp.client.recipientLookup(sppLookupAddress(emp));
         if (!lookup?.entry) {
           push(`Skip ${emp.name}: not SPP-registered`);
           continue;
@@ -265,7 +310,7 @@ export default function PayrollPage() {
         await act("mark_spp_paid", { employeeId: emp.id, xlmAmount: payAmount });
         await act("pay", { employeeId: emp.id, amount: payAmount });
         const i = next.findIndex((e) => e.id === emp.id);
-        if (i >= 0) next[i] = { ...next[i], lastSppPayXlm: payAmount };
+        if (i >= 0) next[i] = { ...next[i], ...emp, lastSppPayXlm: payAmount };
         okCount += 1;
         push(`Paid ${payAmount} XLM → ${emp.name}`);
       }
@@ -447,7 +492,9 @@ export default function PayrollPage() {
             </button>
           </div>
           <p className="text-[10px] text-[var(--cream-dim)]">
-            Resolves to the owner&apos;s Freighter G… via VNS.{" "}
+            Each add/pay mints a <strong className="font-medium text-[var(--cream)]">fresh stealth G…</strong>{" "}
+            via VNS (never the Freighter owner). SPP still delivers to the owner&apos;s registered pool
+            keys.{" "}
             <Link className="text-[var(--mint)] underline" href="/app/stealth">
               Register names
             </Link>{" "}
@@ -476,8 +523,13 @@ export default function PayrollPage() {
                       <span className="ml-1.5 text-[var(--mint)]">{e.veilName}.veil</span>
                     )}
                     <span className="mt-0.5 block truncate font-mono text-[10px] text-[var(--cream-dim)]">
-                      {e.stellarAddress}
+                      stealth {e.stellarAddress.slice(0, 6)}…{e.stellarAddress.slice(-4)}
                     </span>
+                    {e.ownerAddress && (
+                      <span className="block truncate font-mono text-[9px] text-[var(--cream-dim)]/70">
+                        owner {e.ownerAddress.slice(0, 6)}…{e.ownerAddress.slice(-4)}
+                      </span>
+                    )}
                   </span>
                   <span className="shrink-0 text-right text-xs text-[var(--cream-dim)]">
                     <span className="block">{e.confidentialBalanceUsdc} conf.</span>

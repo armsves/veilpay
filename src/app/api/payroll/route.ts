@@ -30,6 +30,7 @@ export async function POST(req: Request) {
     name?: string;
     veilName?: string;
     stellarAddress?: string;
+    ownerAddress?: string;
     stealthMeta?: string;
     employeeId?: string;
     fiat?: "ARS" | "PEN";
@@ -49,14 +50,15 @@ export async function POST(req: Request) {
       }
       case "add_employee": {
         let stellarAddress = body.stellarAddress?.trim() ?? "";
+        let ownerAddress: string | undefined;
         let veilName = body.veilName?.trim() || undefined;
         let displayName = body.name?.trim() || undefined;
 
         if (veilName || (displayName && !stellarAddress.startsWith("G"))) {
           const raw = veilName || displayName || "";
           const name = normalizeName(raw);
-          const record = getVeilNameRegistry().get(name);
-          if (!record) {
+          const registry = getVeilNameRegistry();
+          if (!registry.get(name)) {
             return NextResponse.json(
               {
                 ok: false,
@@ -65,9 +67,14 @@ export async function POST(req: Request) {
               { status: 404 },
             );
           }
+          // Fresh one-time stealth address (not the Freighter owner).
+          const { record, payment } = registry.resolve(name);
           veilName = record.name;
-          stellarAddress = record.owner;
+          ownerAddress = record.owner;
+          stellarAddress = payment.stealthAddress;
           displayName = displayName || record.fqdn;
+        } else if (body.ownerAddress?.startsWith("G")) {
+          ownerAddress = body.ownerAddress.trim();
         }
 
         if (!stellarAddress.startsWith("G") || stellarAddress.length < 56) {
@@ -81,6 +88,7 @@ export async function POST(req: Request) {
           name: displayName || veilName || "Employee",
           veilName,
           stellarAddress,
+          ownerAddress,
           stealthMeta: body.stealthMeta,
         });
         return NextResponse.json({
@@ -89,6 +97,32 @@ export async function POST(req: Request) {
             ...emp,
             confidentialBalance: emp.confidentialBalance.toString(),
             confidentialBalanceUsdc: formatUsdc(emp.confidentialBalance),
+          },
+        });
+      }
+      case "fresh_stealth": {
+        if (!body.employeeId) {
+          return NextResponse.json({ ok: false, error: "employeeId required" }, { status: 400 });
+        }
+        const emp = svc.employees.find((e) => e.id === body.employeeId);
+        if (!emp) {
+          return NextResponse.json({ ok: false, error: "Employee not found" }, { status: 404 });
+        }
+        if (!emp.veilName) {
+          return NextResponse.json(
+            { ok: false, error: "Only .veil employees get fresh stealth addresses" },
+            { status: 400 },
+          );
+        }
+        const { record, payment } = getVeilNameRegistry().resolve(emp.veilName);
+        emp.ownerAddress = record.owner;
+        const updated = svc.setStealthAddress(emp.id, payment.stealthAddress);
+        return NextResponse.json({
+          ok: true,
+          employee: {
+            ...updated,
+            confidentialBalance: updated.confidentialBalance.toString(),
+            confidentialBalanceUsdc: formatUsdc(updated.confidentialBalance),
           },
         });
       }
