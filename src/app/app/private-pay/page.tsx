@@ -88,7 +88,7 @@ export default function PrivatePayPage() {
       setError(null);
       push(
         fromWipe
-          ? "Post-wipe reload — approve Freighter key derivation, then syncing…"
+          ? "Fresh wallet after OPFS wipe — approve Freighter “Privacy Pool Key Derivation [v2]” if prompted…"
           : "Booting SPP (WASM + circuits from CDN)…",
       );
       try {
@@ -151,10 +151,10 @@ export default function PrivatePayPage() {
     setBusy(true);
     setError(null);
     setSession(null);
-    push("Stopping SPP sync, wiping OPFS, then reloading (required to release Access Handle)…");
+    push("Scheduling OPFS wipe on next load (releases Access Handle), then reloading…");
     try {
       await wipeSppLocalWalletAndReload();
-      // page unloads
+      // page unloads — wipe runs before Storage.open on the new document
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
       setBusy(false);
@@ -278,35 +278,35 @@ export default function PrivatePayPage() {
       {keyMismatch && (
         <div className="panel space-y-3 border-[rgba(232,180,92,0.45)] p-4 text-sm">
           <p className="text-[var(--amber)]">
-            Your Freighter is registered on-chain with different SPP keys than this browser wallet.
-            The shielded ~3.5 XLM was encrypted to the registry keys — this tab cannot decrypt them
-            until keys match (or you withdraw where those keys live).
+            On-chain SPP registry keys ≠ this browser’s wallet. The ~3.5 XLM shield used{" "}
+            <code>transfer(G…)</code> so notes decrypt only with the registry’s private keys (often
+            first created in the Nethermind demo OPFS).
           </p>
           <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              className="btn btn-amber !py-2 !px-4 text-sm"
-              disabled={busy || !wallet.address}
-              onClick={() => void resetSppWallet()}
-            >
-              {busy ? "Resetting…" : "1. Reset SPP wallet & re-derive"}
-            </button>
             <a
               className="btn btn-primary !py-2 !px-4 text-sm"
               href={sppDocs.demo}
               target="_blank"
               rel="noreferrer"
             >
-              2. Nethermind demo → Withdraw
+              1. Nethermind demo → Withdraw (best for the 3.5 XLM)
             </a>
+            <button
+              type="button"
+              className="btn btn-amber !py-2 !px-4 text-sm"
+              disabled={busy || !wallet.address}
+              onClick={() => void resetSppWallet()}
+            >
+              {busy ? "Resetting…" : "2. Reset Veilpay OPFS & re-derive"}
+            </button>
             <Link className="btn btn-ghost !py-2 !px-4 text-sm" href="/app/stealth">
               3. Stealth → Reclaim
             </Link>
           </div>
           <p className="text-xs text-[var(--cream-dim)]">
-            Step 1 must show a Freighter prompt for key derivation. If it doesn’t, close other Veilpay
-            tabs and retry. Step 2: same Freighter, do not clear the demo’s site data. New Shields
-            already use local keys.
+            Demo: same Freighter, do <strong>not</strong> clear that site’s data. Reset: close other
+            Veilpay tabs; after reload Freighter must prompt for key derivation. New Shields use
+            local keys so this mismatch won’t strand future deposits.
           </p>
         </div>
       )}
