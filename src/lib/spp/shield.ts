@@ -53,18 +53,30 @@ export async function shieldStealthViaSpp(opts: {
     );
   }
 
-  push("Ensuring your Freighter is registered on the SPP pool…");
-  await createSppClient({ userAddress: opts.ownerAddress });
+  let stealthSession: Awaited<ReturnType<typeof createSppClient>>;
+  try {
+    push("Ensuring your Freighter is registered on the SPP pool…");
+    // Same shared OPFS Client as the stealth session (never open Storage twice).
+    await createSppClient({ userAddress: opts.ownerAddress });
 
-  push("Opening SPP session as stealth burner…");
-  const signer = new StealthKeypairSigner(
-    opts.stealthSecret,
-    currentNetwork().networkPassphrase,
-  );
-  const stealthSession = await createSppClient({
-    userAddress: opts.stealthAddress,
-    signer,
-  });
+    push("Opening SPP session as stealth burner…");
+    const signer = new StealthKeypairSigner(
+      opts.stealthSecret,
+      currentNetwork().networkPassphrase,
+    );
+    stealthSession = await createSppClient({
+      userAddress: opts.stealthAddress,
+      signer,
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (/local database|Access Handle|OPFS|another tab/i.test(msg)) {
+      throw new Error(
+        "SPP storage is locked — close other Veilpay / Private pay tabs using SPP, then reload this page and retry.",
+      );
+    }
+    throw e;
+  }
 
   let totalDeposited = 0n;
   let totalTransferred = 0n;

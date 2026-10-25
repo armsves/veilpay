@@ -1,6 +1,9 @@
 /**
  * Browser-only Stellar Private Payments session.
  * Deposit / private transfer / withdraw against Nethermind testnet pools.
+ *
+ * OPFS allows only one sync access handle — open Storage once per page and
+ * reuse the Client shell for every account (Freighter + stealth burners).
  */
 
 "use client";
@@ -15,22 +18,22 @@ export type SppSession = {
   networkPassphrase: string;
 };
 
+type SharedRuntime = {
+  client: Awaited<ReturnType<typeof bootSharedRuntime>>["client"];
+  networkPassphrase: string;
+  rpcUrl: string;
+};
+
+let sharedBoot: Promise<SharedRuntime> | null = null;
+
 async function loadJson<T>(url: string): Promise<T> {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Failed to load ${url}: ${res.status}`);
   return res.json() as Promise<T>;
 }
 
-export async function createSppClient(opts?: {
-  poolContract?: string;
-  bootnodeUrl?: string;
-  userAddress?: string;
-  /** Defaults to Freighter. Pass a stealth KeypairSigner to shield burner funds. */
-  signer?: import("stellar-private-payments").WalletSigner;
-}) {
+async function bootSharedRuntime(): Promise<SharedRuntime> {
   const spp = await import("stellar-private-payments");
-  const { FreighterSigner } = await import("stellar-private-payments/freighter");
-
   await spp.default();
 
   const contractConfig = await loadJson<Record<string, unknown>>(sppAssetUrls.deploymentsUrl);
@@ -43,14 +46,13 @@ export async function createSppClient(opts?: {
     (typeof contractConfig.networkPassphrase === "string" && contractConfig.networkPassphrase) ||
     "Test SDF Network ; September 2015";
 
+  // One OPFS DB handle for the whole tab — a second Storage.open() panics.
   const storage = await spp.Storage.open({
     workerUrl: sppAssetUrls.storageWorkerUrl,
   });
 
   const bootnodeUrl =
-    opts?.bootnodeUrl?.trim() ||
-    process.env.NEXT_PUBLIC_SPP_BOOTNODE_URL?.trim() ||
-    SPP_DEFAULT_BOOTNODE_URL;
+    process.env.NEXT_PUBLIC_SPP_BOOTNODE_URL?.trim() || SPP_DEFAULT_BOOTNODE_URL;
 
   const client = await spp.Client.new({
     rpcUrl,
@@ -64,6 +66,43 @@ export async function createSppClient(opts?: {
   });
 
   await client.backgroundSync();
+  return { client, networkPassphrase, rpcUrl };
+}
+
+/** Shared Client + Storage for this tab (lazy). */
+export function getSharedSppRuntime() {
+  if (!sharedBoot) sharedBoot = bootSharedRuntime();
+  return sharedBoot;
+}
+
+/** Drop the shared runtime so the next call re-opens OPFS (e.g. after fatal storage errors). */
+export function resetSharedSppRuntime() {
+  void sharedBoot
+    ?.then((rt) => {
+      try {
+        rt.client.stopBackgroundSync?.();
+      } catch {
+        /* ignore */
+      }
+      try {
+        rt.client.dispose?.();
+      } catch {
+        /* ignore */
+      }
+    })
+    .catch(() => undefined);
+  sharedBoot = null;
+}
+
+export async function createSppClient(opts?: {
+  poolContract?: string;
+  bootnodeUrl?: string;
+  userAddress?: string;
+  /** Defaults to Freighter. Pass a stealth KeypairSigner to shield burner funds. */
+  signer?: import("stellar-private-payments").WalletSigner;
+}) {
+  const { FreighterSigner } = await import("stellar-private-payments/freighter");
+  const { client, networkPassphrase, rpcUrl } = await getSharedSppRuntime();
 
   const signer = opts?.signer ?? new FreighterSigner();
   const account = await client.account(
