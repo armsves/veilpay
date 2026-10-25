@@ -37,9 +37,16 @@ yarn-error.log*
 # vercel
 .vercel
 
+# Vendored at build time from @aztec/bb.js (see scripts/vendor-bb.mjs)
+/public/bb/
+
 # local VNS snapshot
 .data/
 
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Soroban contract build artifacts
+contracts/**/target/
+*.wasm
