@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useWallet } from "@/components/WalletProvider";
-import { shieldStealthViaSpp } from "@/lib/spp/shield";
+import { MIN_SHIELD_BALANCE_XLM, shieldStealthViaSpp } from "@/lib/spp/shield";
 
 type Meta = { encoded: string; spendingPubKey: string; viewingPubKey: string };
 type Payment = { stealthAddress: string; ephemeralPubKey: string; viewTag: number; memoHint: string };
@@ -79,9 +79,9 @@ export default function StealthPage() {
       });
       const data = await res.json();
       if (!data.ok) throw new Error(data.error);
-      if (data.balanceXlm < 1.25) {
+      if (data.balanceXlm < MIN_SHIELD_BALANCE_XLM) {
         setStatus(
-          `Stealth has ${data.balanceXlm} XLM — need ≳1.25 XLM to SPP-shield (1 XLM base reserve + small fee pad + deposit).`,
+          `Stealth has ${data.balanceXlm} XLM — need ≥${MIN_SHIELD_BALANCE_XLM} XLM to SPP-shield (1 XLM reserve + 0.5 XLM fees + ≥1 XLM deposit). Top up this burner or pay a fresh address.`,
         );
         return;
       }
@@ -400,11 +400,11 @@ export default function StealthPage() {
                     <button
                       type="button"
                       className="btn btn-primary !py-1 !px-2.5 text-[10px]"
-                      disabled={busy || item.swept || item.balanceXlm < 1.25}
+                      disabled={busy || item.swept || item.balanceXlm < MIN_SHIELD_BALANCE_XLM}
                       onClick={() => void sweepItem(item)}
                       title={
-                        item.balanceXlm < 1.25
-                          ? "Need ≳1.25 XLM to shield"
+                        item.balanceXlm < MIN_SHIELD_BALANCE_XLM
+                          ? `Need ≥${MIN_SHIELD_BALANCE_XLM} XLM to shield`
                           : "SPP deposit + private transfer"
                       }
                     >

@@ -24,16 +24,20 @@ export async function accountExists(address: string): Promise<boolean> {
   return (await loadAccountOrNull(address)) !== null;
 }
 
-/** Native XLM balance in decimal XLM (0 if account missing). */
-export async function fetchXlmBalance(address: string): Promise<number> {
+/** Native XLM balance in stroops (0 if account missing). */
+export async function fetchXlmBalanceStroops(address: string): Promise<bigint> {
   const server = createRpcServer();
   try {
     const entry = await server.getAccountEntry(address);
-    const stroops = BigInt(entry.balance.toString());
-    return Number(stroops) / 1e7;
+    return BigInt(entry.balance.toString());
   } catch {
-    return 0;
+    return 0n;
   }
+}
+
+/** Native XLM balance in decimal XLM (0 if account missing). */
+export async function fetchXlmBalance(address: string): Promise<number> {
+  return Number(await fetchXlmBalanceStroops(address)) / 1e7;
 }
 
 /**

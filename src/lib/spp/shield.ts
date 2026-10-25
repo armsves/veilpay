@@ -1,25 +1,31 @@
 /**
  * Shield a stealth burner into the SPP pool, then privately transfer to the owner.
- * Avoids a public payment stealth → Freighter (which links the receive).
  *
- * Multipass deposits leave only the Stellar base reserve (~1 XLM) on the burner —
- * not a fat 2 XLM "fee dust" pad. That last 1 XLM is protocol minimum for an open
- * account; reclaiming it requires account-merge (public link), which we skip.
+ * Failed txs like 3248f0f4… trapped with:
+ *   "resulting balance is not within the allowed range" [min=1 XLM, wouldBe=0.66…]
+ * because a ~0.35 XLM SAC transfer left the burner under the 1 XLM protocol minimum
+ * after Soroban fees. Keep integer stroop math + real headroom.
  */
 
 "use client";
 
 import { currentNetwork } from "@/lib/stellar/config";
-import { fetchXlmBalance } from "@/lib/stellar/rpc";
+import { fetchXlmBalance, fetchXlmBalanceStroops } from "@/lib/stellar/rpc";
 import { StealthKeypairSigner } from "./keypair-signer";
-import { createSppClient, xlmToStroops, stroopsToXlm } from "./session";
+import { createSppClient, stroopsToXlm } from "./session";
 
-/** Protocol minimum for an account with no subentries (2 × 0.5 XLM base reserve). */
-const BASE_RESERVE_XLM = 1;
-/** Tiny pad so the next Soroban tx can pay fees without dipping under reserve. */
-const TX_FEE_PAD_XLM = 0.15;
-/** Don't bother depositing below this. */
-const MIN_DEPOSIT_XLM = 0.05;
+/** Classic account minimum (2 × 0.5 XLM base reserve). */
+const BASE_RESERVE_STROOPS = 10_000_000n;
+/**
+ * Soroban resource/inclusion fees + safety margin. The failed deposit used only
+ * ~0.15 XLM pad and still dipped under reserve.
+ */
+const FEE_HEADROOM_STROOPS = 5_000_000n; // 0.5 XLM
+/** Don't bother shielding tiny notes. */
+const MIN_DEPOSIT_STROOPS = 10_000_000n; // 1 XLM
+
+/** Balance needed before a shield attempt: 1 XLM reserve + 0.5 fee + 1 XLM deposit. */
+export const MIN_SHIELD_BALANCE_XLM = 2.5;
 
 export type ShieldResult = {
   depositedXlm: string;
@@ -29,15 +35,16 @@ export type ShieldResult = {
   leftoverXlm: number;
 };
 
-function spendableDepositXlm(balance: number): number {
-  const amt = Math.floor((balance - BASE_RESERVE_XLM - TX_FEE_PAD_XLM) * 1e7) / 1e7;
-  return amt >= MIN_DEPOSIT_XLM ? amt : 0;
+/** Max stroops we can deposit without leaving the burner under 1 XLM after fees. */
+export function maxDepositStroops(balanceStroops: bigint): bigint {
+  const max = balanceStroops - BASE_RESERVE_STROOPS - FEE_HEADROOM_STROOPS;
+  return max >= MIN_DEPOSIT_STROOPS ? max : 0n;
 }
 
 /**
  * 1) Ensure owner Freighter is SPP-registered (for private receive).
- * 2) Stealth deposits into XLM pool (repeat while spendable native remains).
- * 3) After each deposit, private-transfer full shielded balance → owner.
+ * 2) Stealth deposits into XLM pool (one sized deposit; optional second pass).
+ * 3) Private-transfer full shielded balance → owner.
  */
 export async function shieldStealthViaSpp(opts: {
   stealthSecret: string;
@@ -46,17 +53,20 @@ export async function shieldStealthViaSpp(opts: {
   onProgress?: (msg: string) => void;
 }): Promise<ShieldResult> {
   const push = opts.onProgress ?? (() => undefined);
-  const opening = await fetchXlmBalance(opts.stealthAddress);
-  if (spendableDepositXlm(opening) <= 0) {
+  const opening = await fetchXlmBalanceStroops(opts.stealthAddress);
+  const firstDeposit = maxDepositStroops(opening);
+  if (firstDeposit <= 0n) {
+    const have = stroopsToXlm(opening);
     throw new Error(
-      `Need more than ~${(BASE_RESERVE_XLM + TX_FEE_PAD_XLM + MIN_DEPOSIT_XLM).toFixed(2)} XLM on the stealth address to shield (have ${opening}).`,
+      `Need ≥${MIN_SHIELD_BALANCE_XLM} XLM on the stealth address to SPP-shield (have ${have}). ` +
+        `Must leave 1 XLM base reserve + ~0.5 XLM Soroban fees; depositing more traps with ` +
+        `"resulting balance is not within the allowed range".`,
     );
   }
 
   let stealthSession: Awaited<ReturnType<typeof createSppClient>>;
   try {
     push("Ensuring your Freighter is registered on the SPP pool…");
-    // Same shared OPFS Client as the stealth session (never open Storage twice).
     await createSppClient({ userAddress: opts.ownerAddress });
 
     push("Opening SPP session as stealth burner…");
@@ -81,14 +91,24 @@ export async function shieldStealthViaSpp(opts: {
   let totalDeposited = 0n;
   let totalTransferred = 0n;
 
-  for (let pass = 1; pass <= 3; pass++) {
-    const native = await fetchXlmBalance(opts.stealthAddress);
-    const depositXlm = spendableDepositXlm(native);
-    if (depositXlm <= 0) break;
+  for (let pass = 1; pass <= 2; pass++) {
+    const native = await fetchXlmBalanceStroops(opts.stealthAddress);
+    const depositStroops = maxDepositStroops(native);
+    if (depositStroops <= 0n) break;
 
-    const depositStroops = xlmToStroops(depositXlm.toFixed(7));
-    push(`Deposit pass ${pass}: ${depositXlm} XLM from stealth → SPP pool…`);
-    await stealthSession.pool.deposit(depositStroops);
+    push(`Deposit pass ${pass}: ${stroopsToXlm(depositStroops)} XLM from stealth → SPP pool…`);
+    try {
+      await stealthSession.pool.deposit(depositStroops);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (/allowed range|balance is not within|trapped|HostError/i.test(msg)) {
+        throw new Error(
+          `SPP deposit trapped: would leave burner under the 1 XLM minimum. ` +
+            `Send more XLM to the stealth address (need ≥${MIN_SHIELD_BALANCE_XLM} XLM total) and retry. (${msg})`,
+        );
+      }
+      throw e;
+    }
     totalDeposited += depositStroops;
 
     const shielded = await stealthSession.pool.balance();
@@ -99,9 +119,15 @@ export async function shieldStealthViaSpp(opts: {
     }
   }
 
+  if (totalDeposited <= 0n) {
+    throw new Error(
+      `Nothing deposited — stealth balance too low after fees (need ≥${MIN_SHIELD_BALANCE_XLM} XLM).`,
+    );
+  }
+
   const leftoverXlm = await fetchXlmBalance(opts.stealthAddress);
   push(
-    `Shielded via SPP. ~${leftoverXlm.toFixed(2)} XLM stays on the burner (Stellar base reserve — reclaiming it would require a public account-merge).`,
+    `Shielded via SPP. ~${leftoverXlm.toFixed(2)} XLM stays on the burner (1 XLM reserve + fee headroom).`,
   );
 
   return {
