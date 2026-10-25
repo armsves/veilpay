@@ -114,22 +114,42 @@ export default function PrivatePayPage() {
     setBalance("—");
     setKeyMismatch(false);
     try {
-      push("Wiping Veilpay SPP OPFS + re-deriving keys from Freighter…");
+      push("Wiping all Veilpay OPFS + SPP local state…");
       await wipeSppLocalWallet();
-      push("Approve the Freighter signature for Privacy Pool Key Derivation…");
+      push("Approve Freighter: “Privacy Pool Key Derivation [v2] (Nethermind)” — required for a fresh derive");
       const s = await createSppClient({ userAddress: wallet.address });
       setSession(s);
       const local = await s.account.privacyKeys();
-      await s.client.sync();
-      const lookup = await s.client.recipientLookup(wallet.address);
-      const entry = lookup?.entry;
-      if (entry && sppKeysMatch(local, entry)) {
-        push("Local keys now match the on-chain registry — syncing notes…");
+      // Give bootnode/indexer a few sync rounds before declaring failure.
+      let matched = false;
+      let bal = 0n;
+      for (let round = 1; round <= 4; round++) {
+        push(`Sync round ${round}/4…`);
+        await s.client.sync();
+        const lookup = await s.client.recipientLookup(wallet.address);
+        const entry = lookup?.entry;
+        if (entry && sppKeysMatch(local, entry)) {
+          matched = true;
+          setKeyMismatch(false);
+          push("Local keys match on-chain registry");
+        }
+        bal = await s.pool.balance();
+        if (bal > 0n) break;
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+      setBalance(stroopsToXlm(bal));
+      if (bal > 0n) {
+        push(`Recovered shielded balance ${stroopsToXlm(bal)} XLM — Withdraw to Freighter`);
         setKeyMismatch(false);
-      } else if (entry) {
+      } else if (!matched) {
         setKeyMismatch(true);
         push(
-          "Still mismatched after re-derive — registry was registered with different keys. Open the Nethermind demo (same Freighter, do not clear its site data) and Withdraw there.",
+          "Still mismatched / 0 XLM — registry keys aren’t from this Freighter v2 derive. Open the Nethermind demo with the same Freighter (keep its site data) → Withdraw.",
+        );
+      } else {
+        setKeyMismatch(false);
+        push(
+          "Keys match but still 0 notes — try Stealth → Reclaim, or the Nethermind demo if notes were spent to older keys before a registry update.",
         );
       }
       await refreshBalance(s, wallet.address);
@@ -252,7 +272,7 @@ export default function PrivatePayPage() {
         <div className="panel space-y-3 border-[rgba(232,180,92,0.45)] p-4 text-sm">
           <p className="text-[var(--amber)]">
             Your Freighter is registered on-chain with different SPP keys than this browser wallet.
-            The shielded 3.5 XLM was encrypted to the registry keys — Veilpay cannot decrypt them
+            The shielded ~3.5 XLM was encrypted to the registry keys — this tab cannot decrypt them
             until keys match (or you withdraw where those keys live).
           </p>
           <div className="flex flex-wrap gap-2">
@@ -262,7 +282,7 @@ export default function PrivatePayPage() {
               disabled={busy || !wallet.address}
               onClick={() => void resetSppWallet()}
             >
-              {busy ? "Resetting…" : "Reset SPP wallet & re-derive"}
+              {busy ? "Resetting…" : "1. Reset SPP wallet & re-derive"}
             </button>
             <a
               className="btn btn-primary !py-2 !px-4 text-sm"
@@ -270,15 +290,16 @@ export default function PrivatePayPage() {
               target="_blank"
               rel="noreferrer"
             >
-              Open Nethermind demo → Withdraw
+              2. Nethermind demo → Withdraw
             </a>
             <Link className="btn btn-ghost !py-2 !px-4 text-sm" href="/app/stealth">
-              Stealth → Reclaim
+              3. Stealth → Reclaim
             </Link>
           </div>
           <p className="text-xs text-[var(--cream-dim)]">
-            Do not clear the Nethermind demo’s site data — that OPFS holds the matching private keys.
-            New Veilpay Shields already use local keys (transferToKeys).
+            Step 1 must show a Freighter prompt for key derivation. If it doesn’t, close other Veilpay
+            tabs and retry. Step 2: same Freighter, do not clear the demo’s site data. New Shields
+            already use local keys.
           </p>
         </div>
       )}

@@ -120,24 +120,33 @@ export function sppKeysMatch(
  * `createSppClient` re-derives Freighter privacy keys from scratch.
  * Privacy keys are deterministic (SEP-53 sign of the v2 KDF message) — a clean
  * re-derive should match the on-chain registry when it was registered the same way.
+ *
+ * sqlite-wasm OPFS uses opaque sahpool directory names — delete the whole
+ * origin OPFS tree, not just paths matching /spp/.
  */
 export async function wipeSppLocalWallet(): Promise<void> {
   resetSharedSppRuntime();
-  // Let dispose finish before removing OPFS files the worker may hold.
-  await new Promise((r) => setTimeout(r, 200));
+  // Worker must release the sync access handle before OPFS removes succeed.
+  await new Promise((r) => setTimeout(r, 600));
 
   try {
     const root = await navigator.storage.getDirectory();
     const toRemove: string[] = [];
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     for await (const [name] of (root as any).entries() as AsyncIterable<[string, unknown]>) {
-      if (/spp|sqlite|opfs|sahpool/i.test(name)) toRemove.push(name);
+      toRemove.push(name);
     }
     for (const name of toRemove) {
       try {
         await root.removeEntry(name, { recursive: true });
       } catch {
-        /* ignore locked / missing */
+        /* retry once after another pause (handle still releasing) */
+        await new Promise((r) => setTimeout(r, 400));
+        try {
+          await root.removeEntry(name, { recursive: true });
+        } catch {
+          /* ignore */
+        }
       }
     }
   } catch {
@@ -145,10 +154,26 @@ export async function wipeSppLocalWallet(): Promise<void> {
   }
 
   try {
+    const idb = indexedDB as IDBFactory & {
+      databases?: () => Promise<Array<{ name?: string }>>;
+    };
+    if (typeof idb.databases === "function") {
+      const dbs = await idb.databases();
+      for (const db of dbs) {
+        if (db.name && /spp|sqlite|opfs|stellar/i.test(db.name)) {
+          indexedDB.deleteDatabase(db.name);
+        }
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+
+  try {
     const kill: string[] = [];
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i);
-      if (k && /spp|stellar-private|privacy.?pool/i.test(k)) kill.push(k);
+      if (k && /spp|stellar-private|privacy.?pool|opfs/i.test(k)) kill.push(k);
     }
     for (const k of kill) localStorage.removeItem(k);
   } catch {
