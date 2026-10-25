@@ -183,11 +183,40 @@ export async function POST(req: Request) {
       }
       case "panic": {
         const snap = svc.solvency.forcePanic(body.reason ?? "operator panic");
-        return NextResponse.json({ ok: true, solvency: serializeSnap(snap) });
+        let onchain: { hash: string; owner: string } | null = null;
+        let onchainError: string | undefined;
+        try {
+          const { forcePanicOnchain } = await import("@/lib/confidential/admin");
+          onchain = await forcePanicOnchain();
+        } catch (e) {
+          onchainError = e instanceof Error ? e.message : String(e);
+        }
+        return NextResponse.json({
+          ok: true,
+          solvency: serializeSnap(snap),
+          onchain,
+          ...(onchainError ? { onchainError } : {}),
+          note: onchain
+            ? "On-chain panic stop set — pool ops frozen until unpause"
+            : "Demo ledger halted; on-chain panic failed",
+        });
       }
       case "halt_if_insolvent": {
         const snap = svc.solvency.haltIfInsolvent(body.reason ?? "monitor");
-        return NextResponse.json({ ok: true, solvency: serializeSnap(snap) });
+        let onchain: { hash: string; panic_halt: boolean; coverage_bps: number } | null = null;
+        let onchainError: string | undefined;
+        try {
+          const { haltIfInsolventOnchain } = await import("@/lib/confidential/admin");
+          onchain = await haltIfInsolventOnchain();
+        } catch (e) {
+          onchainError = e instanceof Error ? e.message : String(e);
+        }
+        return NextResponse.json({
+          ok: true,
+          solvency: serializeSnap(snap),
+          onchain,
+          ...(onchainError ? { onchainError } : {}),
+        });
       }
       case "rescue": {
         const { parseUsdc } = await import("@/lib/confidential/solvency");
@@ -196,7 +225,20 @@ export async function POST(req: Request) {
       }
       case "unpause": {
         const snap = svc.solvency.unpause(body.reason ?? "governance rescue");
-        return NextResponse.json({ ok: true, solvency: serializeSnap(snap) });
+        let onchain: { hash: string } | null = null;
+        let onchainError: string | undefined;
+        try {
+          const { unpauseOnchain } = await import("@/lib/confidential/admin");
+          onchain = await unpauseOnchain();
+        } catch (e) {
+          onchainError = e instanceof Error ? e.message : String(e);
+        }
+        return NextResponse.json({
+          ok: true,
+          solvency: serializeSnap(snap),
+          onchain,
+          ...(onchainError ? { onchainError } : {}),
+        });
       }
       default:
         return NextResponse.json({ ok: false, error: "unknown action" }, { status: 400 });

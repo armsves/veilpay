@@ -271,7 +271,20 @@ export default function PayrollPage() {
     }
     // Quiet for internal pay bookkeeping — callers toast the user-facing result.
     if (action !== "mark_spp_paid" && action !== "pay" && action !== "fresh_stealth") {
-      notify(true, action.replaceAll("_", " "));
+      if (action === "panic") {
+        if (data.onchain?.hash) {
+          notify(true, `Panic stop on-chain · ${String(data.onchain.hash).slice(0, 12)}…`);
+        } else {
+          notify(
+            false,
+            `Demo panic only — on-chain failed: ${data.onchainError ?? "unknown"}`,
+          );
+        }
+      } else if (action === "unpause" && data.onchainError) {
+        notify(false, `Unpause demo ok; on-chain: ${data.onchainError}`);
+      } else {
+        notify(true, action.replaceAll("_", " "));
+      }
     }
     if (data.solvency) setSolvency(data.solvency);
     if (data.plan) {
@@ -663,10 +676,10 @@ export default function PayrollPage() {
               Halt if insolvent
             </button>
             <button
-              className="btn btn-ghost !py-1.5 !px-2.5 text-xs"
-              onClick={() => void act("panic", { reason: "manual" })}
+              className="btn btn-ghost !py-1.5 !px-2.5 text-xs text-[var(--danger)]"
+              onClick={() => void act("panic", { reason: "manual panic stop" })}
             >
-              Panic
+              Panic stop
             </button>
             <button
               className="btn btn-amber !py-1.5 !px-2.5 text-xs"
