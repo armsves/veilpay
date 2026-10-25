@@ -102,7 +102,7 @@ export default function StealthPage() {
         }),
       });
       setStatus(
-        `Shielded ${result.transferredXlm} XLM via SPP → your private balance. ~${result.leftoverXlm.toFixed(2)} XLM base reserve remains on burner (protocol minimum).`,
+        `Shielded ${result.transferredXlm} XLM into your SPP private pool (not visible in Freighter yet). Open Private pay → Connect SPP → Withdraw to move it to your wallet. ~${result.leftoverXlm.toFixed(2)} XLM stays on the burner as reserve.`,
       );
       await loadMyName();
     } catch (e) {
@@ -320,9 +320,14 @@ export default function StealthPage() {
 
       {(error || status) && (
         <div
-          className={`panel p-4 ${error ? "border-[rgba(232,106,92,0.35)] text-[var(--danger)]" : "text-[var(--mint)]"}`}
+          className={`panel space-y-2 p-4 ${error ? "border-[rgba(232,106,92,0.35)] text-[var(--danger)]" : "text-[var(--mint)]"}`}
         >
-          {error ?? status}
+          <p>{error ?? status}</p>
+          {!error && status?.includes("SPP") && (
+            <Link className="btn btn-primary !py-1.5 !px-3 text-xs" href="/app/private-pay">
+              Open Private pay → Withdraw
+            </Link>
+          )}
         </div>
       )}
 

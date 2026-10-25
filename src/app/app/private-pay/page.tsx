@@ -154,8 +154,11 @@ export default function PrivatePayPage() {
       <div className="panel space-y-4 p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <p className="text-xs text-[var(--cream-dim)]">Shielded balance</p>
+            <p className="text-xs text-[var(--cream-dim)]">Shielded balance (SPP pool — not Freighter)</p>
             <p className="display text-3xl">{balance} XLM</p>
+            <p className="mt-1 text-xs text-[var(--cream-dim)]">
+              After stealth Shield, funds land here. Use Withdraw to move XLM into Freighter.
+            </p>
             <p className="mt-1 font-mono text-[10px] text-[var(--cream-dim)]">
               Pool {SPP_XLM_POOL_ID.slice(0, 12)}…
             </p>
