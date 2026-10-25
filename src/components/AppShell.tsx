@@ -16,7 +16,8 @@ const nav = [
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const fillViewport = pathname === "/app/payroll" || pathname === "/app/cross-border";
+  const fillViewport =
+    pathname === "/app" || pathname === "/app/payroll" || pathname === "/app/cross-border";
 
   return (
     <div

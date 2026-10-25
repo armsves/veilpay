@@ -22,34 +22,35 @@ export default function OverviewPage() {
   }, []);
 
   return (
-    <div className="space-y-8">
-      <div>
-        <p className="pill mb-3">Banking overview</p>
-        <h1 className="display text-4xl tracking-tight sm:text-5xl">Your private operating account</h1>
-        <p className="mt-3 max-w-2xl text-[var(--cream-dim)]">
+    <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
+      <div className="shrink-0">
+        <p className="pill mb-2">Banking overview</p>
+        <h1 className="display text-3xl tracking-tight sm:text-4xl">Your private operating account</h1>
+        <p className="mt-1.5 max-w-2xl text-sm text-[var(--cream-dim)]">
           Modules are separate by design: stealth (testnet / mainnet-intents), confidential payroll with
           auto-halt, and Pollar TestNet bank cash-out.
         </p>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-3">
-        <div className="panel p-5">
-          <p className="text-sm text-[var(--cream-dim)]">Pool assets (B)</p>
-          <p className="display mt-2 text-3xl">{solvency?.assetsUsdc ?? "0"} USDC</p>
+      <div className="grid shrink-0 gap-2.5 sm:grid-cols-3">
+        <div className="panel px-4 py-3">
+          <p className="text-xs text-[var(--cream-dim)]">Pool assets (B)</p>
+          <p className="display mt-1 text-2xl">{solvency?.assetsUsdc ?? "0"} USDC</p>
         </div>
-        <div className="panel p-5">
-          <p className="text-sm text-[var(--cream-dim)]">Liabilities (L)</p>
-          <p className="display mt-2 text-3xl">{solvency?.liabilitiesUsdc ?? "0"} USDC</p>
+        <div className="panel px-4 py-3">
+          <p className="text-xs text-[var(--cream-dim)]">Liabilities (L)</p>
+          <p className="display mt-1 text-2xl">{solvency?.liabilitiesUsdc ?? "0"} USDC</p>
         </div>
-        <div className="panel p-5">
+        <div className="panel flex items-center px-4 py-3">
           <CoverageTrafficLight
+            compact
             ratio={solvency == null ? null : solvency.coverage}
             panicHalt={solvency?.panicHalt}
           />
         </div>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid min-h-0 flex-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-3">
         {[
           {
             href: "/app/stealth",
@@ -77,9 +78,13 @@ export default function OverviewPage() {
             body: "Pollar account · KYC · one-click offramp to bank (TestNet).",
           },
         ].map((c) => (
-          <Link key={c.href} href={c.href} className="panel block p-6 transition hover:border-[rgba(61,186,140,0.35)]">
-            <h2 className="display text-2xl">{c.title}</h2>
-            <p className="mt-2 text-sm text-[var(--cream-dim)]">{c.body}</p>
+          <Link
+            key={c.href}
+            href={c.href}
+            className="panel block p-4 transition hover:border-[rgba(61,186,140,0.35)]"
+          >
+            <h2 className="display text-xl">{c.title}</h2>
+            <p className="mt-1 text-sm text-[var(--cream-dim)]">{c.body}</p>
           </Link>
         ))}
       </div>
