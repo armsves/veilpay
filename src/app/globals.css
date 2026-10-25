@@ -191,15 +191,6 @@ a {
   border-color: transparent;
 }
 
-/* Pollar WalletButton sits on a light SDK chrome — give it a quiet slot. */
-.pollar-wallet-slot {
-  display: inline-flex;
-  align-items: center;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.92);
-  padding: 2px;
-}
-
 .btn:disabled {
   opacity: 0.55;
   transform: none;

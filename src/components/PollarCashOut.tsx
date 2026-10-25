@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { WalletButton, usePollar } from "@pollar/react";
+import { usePollar } from "@pollar/react";
 import { toast } from "react-toastify";
 import Link from "next/link";
 import { hasPollarKey } from "@/lib/pollar/client";
@@ -139,21 +139,18 @@ function PollarCashOutInner({
       : null;
 
   return (
-    <div className="grid min-h-0 flex-1 grid-rows-[auto_1fr] gap-2 overflow-hidden">
-      <div className="grid min-h-0 gap-2 sm:grid-cols-3">
-        {/* Account */}
+    <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
+      <div className="grid min-h-0 flex-1 gap-2 sm:grid-cols-3">
         <section className="panel flex min-h-0 flex-col gap-2 p-3">
-          <div className="flex items-center justify-between gap-2">
-            <h2 className="display text-lg leading-none tracking-tight">1 · Account</h2>
-            <div className="pollar-wallet-slot shrink-0 scale-90 origin-right">
-              <WalletButton />
-            </div>
-          </div>
+          <h2 className="display text-lg leading-none tracking-tight">1 · Account</h2>
+          <p className="text-xs leading-snug text-[var(--cream-dim)]">
+            Pollar TestNet wallet that receives ARS for cash-out.
+          </p>
           {isAuthenticated && address ? (
             <>
               <div className="flex flex-wrap items-center gap-1.5">
                 <span className="pill pill-ok !py-0.5 text-[10px]">
-                  {verified ? "Verified" : "…"}
+                  {verified ? "Signed in" : "Signing in…"}
                 </span>
                 <button
                   type="button"
@@ -207,12 +204,11 @@ function PollarCashOutInner({
               className="btn btn-primary mt-auto !py-1.5 text-sm"
               onClick={() => openLoginModal()}
             >
-              Sign in
+              Sign in with Pollar
             </button>
           )}
         </section>
 
-        {/* KYC */}
         <section className="panel flex min-h-0 flex-col gap-2 p-3">
           <h2 className="display text-lg leading-none tracking-tight">2 · KYC</h2>
           <p className="text-xs leading-snug text-[var(--cream-dim)]">
@@ -223,7 +219,6 @@ function PollarCashOutInner({
           </button>
         </section>
 
-        {/* Offramp */}
         <section className="panel flex min-h-0 flex-col gap-2 p-3">
           <div className="flex items-center justify-between gap-2">
             <h2 className="display text-lg leading-none tracking-tight">3 · Bank</h2>
@@ -264,7 +259,7 @@ function PollarCashOutInner({
         </section>
       </div>
 
-      <section className="panel flex min-h-0 items-center gap-3 overflow-hidden p-3">
+      <section className="panel flex shrink-0 items-center gap-3 overflow-hidden p-3">
         <p className="shrink-0 display text-base leading-none tracking-tight">Path</p>
         <p className="min-w-0 truncate text-xs text-[var(--cream-dim)]">
           <Link href="/app/confidential" className="text-[var(--mint)] underline">
