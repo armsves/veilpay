@@ -356,6 +356,12 @@ export async function ensureSppKeysOnChain(
           `SPP register needs testnet XLM for fees on this Freighter account. ${msg}`,
         );
       }
+      if (/MismatchingParameterLen|UnexpectedSize|prepare register/i.test(msg)) {
+        throw new Error(
+          `SPP key register failed (SDK/circuit mismatch or stale local keys). ` +
+            `Open Private pay → Reset SPP wallet, reload, then Connect SPP again. (${msg.slice(0, 120)})`,
+        );
+      }
       throw e instanceof Error ? e : new Error(msg);
     }
   }

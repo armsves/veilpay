@@ -7,12 +7,14 @@
 export const SPP_NPM = "stellar-private-payments@0.2.1";
 
 /**
- * Circuits: Nethermind GH Pages (jsDelivr 403s the oversized npm package).
- * Workers: same-origin under /spp/workers — cross-origin Worker() panics
- * ("failed to spawn worker" / gloo-worker).
+ * Circuits must match the installed SDK (0.2.1 → circuits lock v0.6).
+ * GH Pages currently ships v0.7 which breaks registerPublicKeys
+ * (HostError UnexpectedSize / MismatchingParameterLen on registry.register).
+ * unpkg serves the npm package; jsDelivr 403s the oversized tarball.
+ * Workers: same-origin under /spp/workers — cross-origin Worker() panics.
  */
 export const SPP_CIRCUITS_ORIGIN =
-  "https://nethermindeth.github.io/stellar-private-payments/js/stellar-private-payments/dist";
+  "https://unpkg.com/stellar-private-payments@0.2.1/dist";
 
 export const sppAssetUrls = {
   circuitsBaseUrl: `${SPP_CIRCUITS_ORIGIN}/circuits/`,
