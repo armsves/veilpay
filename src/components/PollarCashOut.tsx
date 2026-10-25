@@ -140,8 +140,8 @@ function PollarCashOutInner({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
-      <div className="grid min-h-0 flex-1 gap-2 sm:grid-cols-3">
-        <section className="panel flex min-h-0 flex-col gap-2 p-3">
+      <div className="grid shrink-0 gap-2 sm:grid-cols-3 sm:items-start">
+        <section className="panel flex flex-col gap-2 p-3">
           <h2 className="display text-lg leading-none tracking-tight">1 · Account</h2>
           <p className="text-xs leading-snug text-[var(--cream-dim)]">
             Pollar TestNet wallet that receives ARS for cash-out.
@@ -168,7 +168,7 @@ function PollarCashOutInner({
               >
                 {shortAddr(address)}
               </button>
-              <div className="mt-auto flex flex-wrap gap-1">
+              <div className="flex flex-wrap gap-1">
                 <button
                   type="button"
                   className="btn btn-ghost !px-2 !py-1 text-[11px]"
@@ -201,7 +201,7 @@ function PollarCashOutInner({
           ) : (
             <button
               type="button"
-              className="btn btn-primary mt-auto !py-1.5 text-sm"
+              className="btn btn-primary !py-1.5 text-sm"
               onClick={() => openLoginModal()}
             >
               Sign in with Pollar
@@ -209,17 +209,17 @@ function PollarCashOutInner({
           )}
         </section>
 
-        <section className="panel flex min-h-0 flex-col gap-2 p-3">
+        <section className="panel flex flex-col gap-2 p-3">
           <h2 className="display text-lg leading-none tracking-tight">2 · KYC</h2>
           <p className="text-xs leading-snug text-[var(--cream-dim)]">
             Sandbox identity before bank payout. Ramp may prompt again if needed.
           </p>
-          <button type="button" className="btn btn-amber mt-auto !py-1.5 text-sm" onClick={runKyc}>
+          <button type="button" className="btn btn-amber !py-1.5 text-sm" onClick={runKyc}>
             Pass KYC
           </button>
         </section>
 
-        <section className="panel flex min-h-0 flex-col gap-2 p-3">
+        <section className="panel flex flex-col gap-2 p-3">
           <div className="flex items-center justify-between gap-2">
             <h2 className="display text-lg leading-none tracking-tight">3 · Bank</h2>
             {routes == null ? (
@@ -233,7 +233,7 @@ function PollarCashOutInner({
           <p className="text-xs leading-snug text-[var(--cream-dim)]">
             Sell Stellar ARS → sandbox bank. Need ARS in the Pollar wallet.
           </p>
-          <div className="mt-auto flex flex-wrap gap-1.5">
+          <div className="flex flex-wrap gap-1.5">
             <button
               type="button"
               className="btn btn-ghost !px-2 !py-1.5 text-xs"
