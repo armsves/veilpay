@@ -3,7 +3,11 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useWallet } from "@/components/WalletProvider";
-import { MIN_SHIELD_BALANCE_XLM, shieldStealthViaSpp } from "@/lib/spp/shield";
+import {
+  MIN_SHIELD_BALANCE_XLM,
+  reclaimStealthPoolNotes,
+  shieldStealthViaSpp,
+} from "@/lib/spp/shield";
 
 type Meta = { encoded: string; spendingPubKey: string; viewingPubKey: string };
 type Payment = { stealthAddress: string; ephemeralPubKey: string; viewTag: number; memoHint: string };
@@ -103,6 +107,41 @@ export default function StealthPage() {
       });
       setStatus(
         `Shielded ${result.transferredXlm} XLM into your SPP private pool (not visible in Freighter yet). Open Private pay → Connect SPP → Withdraw to move it to your wallet. ~${result.leftoverXlm.toFixed(2)} XLM stays on the burner as reserve.`,
+      );
+      await loadMyName();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function reclaimItem(item: InboxItem) {
+    if (!wallet.address) return;
+    setBusy(true);
+    setError(null);
+    setStatus(null);
+    try {
+      const res = await fetch("/api/names", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "sweep",
+          owner: wallet.address,
+          announcementId: item.id.startsWith("idx_") ? undefined : item.id,
+          index: item.index,
+        }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error);
+      const result = await reclaimStealthPoolNotes({
+        stealthSecret: data.stealthSecret,
+        stealthAddress: data.stealthAddress,
+        ownerAddress: wallet.address,
+        onProgress: (msg) => setStatus(msg),
+      });
+      setStatus(
+        `Reclaimed ${result.transferredXlm} XLM into your SPP pool. Open Private pay → Withdraw.`,
       );
       await loadMyName();
     } catch (e) {
@@ -402,19 +441,30 @@ export default function StealthPage() {
                         {item.swept ? "swept" : "open"}
                       </p>
                     </div>
-                    <button
-                      type="button"
-                      className="btn btn-primary !py-1 !px-2.5 text-[10px]"
-                      disabled={busy || item.swept || item.balanceXlm < MIN_SHIELD_BALANCE_XLM}
-                      onClick={() => void sweepItem(item)}
-                      title={
-                        item.balanceXlm < MIN_SHIELD_BALANCE_XLM
-                          ? `Need ≥${MIN_SHIELD_BALANCE_XLM} XLM to shield`
-                          : "SPP deposit + private transfer"
-                      }
-                    >
-                      Shield
-                    </button>
+                    <div className="flex flex-wrap gap-1">
+                      <button
+                        type="button"
+                        className="btn btn-primary !py-1 !px-2.5 text-[10px]"
+                        disabled={busy || item.swept || item.balanceXlm < MIN_SHIELD_BALANCE_XLM}
+                        onClick={() => void sweepItem(item)}
+                        title={
+                          item.balanceXlm < MIN_SHIELD_BALANCE_XLM
+                            ? `Need ≥${MIN_SHIELD_BALANCE_XLM} XLM to shield`
+                            : "SPP deposit + private transfer"
+                        }
+                      >
+                        Shield
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-ghost !py-1 !px-2.5 text-[10px]"
+                        disabled={busy || item.index == null}
+                        onClick={() => void reclaimItem(item)}
+                        title="Move any notes still on this burner into your Veilpay SPP keys"
+                      >
+                        Reclaim
+                      </button>
+                    </div>
                   </li>
                 ))}
               </ul>

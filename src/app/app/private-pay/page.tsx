@@ -21,27 +21,49 @@ export default function PrivatePayPage() {
     setLog((prev) => [line, ...prev].slice(0, 12));
   }, []);
 
-  const refreshBalance = useCallback(async (s: SppSession) => {
-    try {
-      push("Syncing pool events (needed to see notes from stealth Shield)…");
-      await s.client.sync();
-      const notes = await s.pool.notes();
-      const unspent = notes.filter((n: { spent?: boolean }) => !n.spent);
-      const b = await s.pool.balance();
-      setBalance(stroopsToXlm(b));
-      push(
-        `Shielded balance ${stroopsToXlm(b)} XLM · ${unspent.length} unspent note(s) / ${notes.length} total`,
-      );
-      if (b === 0n) {
+  const refreshBalance = useCallback(
+    async (s: SppSession, ownerAddress?: string) => {
+      try {
+        push("Syncing pool events (needed to see notes from stealth Shield)…");
+        await s.client.sync();
+        const notes = await s.pool.notes();
+        const unspent = notes.filter((n: { spent?: boolean }) => !n.spent);
+        const b = await s.pool.balance();
+        setBalance(stroopsToXlm(b));
         push(
-          "0 here usually means sync has not decrypted your notes yet — wait for indexer, hit Refresh, or confirm Shield finished the private transfer step.",
+          `Shielded balance ${stroopsToXlm(b)} XLM · ${unspent.length} unspent note(s) / ${notes.length} total`,
         );
+        if (b === 0n && ownerAddress) {
+          try {
+            const local = await s.account.privacyKeys();
+            const lookup = await s.client.recipientLookup(ownerAddress);
+            const entry = lookup?.entry;
+            if (
+              entry &&
+              (entry.noteKey !== local.notePublicKey ||
+                entry.encryptionKey !== local.encryptionPublicKey)
+            ) {
+              push(
+                "Registry keys ≠ this browser’s SPP wallet. Notes from transfer(G…) may only decrypt in the app that first registered Freighter (often the Nethermind demo). Open that demo to Withdraw, or Stealth → Reclaim if the burner still holds notes.",
+              );
+            } else {
+              push(
+                "Still 0 after sync — try Stealth → Reclaim on the burner, or the Nethermind SPP demo with the same Freighter.",
+              );
+            }
+          } catch {
+            push(
+              "Still 0 after sync — try Stealth → Reclaim, or the Nethermind SPP demo with the same Freighter.",
+            );
+          }
+        }
+      } catch (e) {
+        setBalance("?");
+        push(`balance: ${e instanceof Error ? e.message : String(e)}`);
       }
-    } catch (e) {
-      setBalance("?");
-      push(`balance: ${e instanceof Error ? e.message : String(e)}`);
-    }
-  }, [push]);
+    },
+    [push],
+  );
 
   async function connectSpp() {
     if (!wallet.address) {
@@ -55,7 +77,7 @@ export default function PrivatePayPage() {
       const s = await createSppClient({ userAddress: wallet.address });
       setSession(s);
       push(`Connected as ${wallet.address.slice(0, 6)}… · pool ${s.poolContract.slice(0, 8)}…`);
-      await refreshBalance(s);
+      await refreshBalance(s, wallet.address);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -180,7 +202,11 @@ export default function PrivatePayPage() {
               {busy ? "Starting…" : "Connect SPP pool"}
             </button>
           ) : (
-            <button className="btn btn-ghost text-sm" disabled={busy} onClick={() => void refreshBalance(session)}>
+            <button
+              className="btn btn-ghost text-sm"
+              disabled={busy}
+              onClick={() => void refreshBalance(session, wallet.address ?? undefined)}
+            >
               Refresh
             </button>
           )}
