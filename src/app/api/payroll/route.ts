@@ -27,8 +27,6 @@ export async function POST(req: Request) {
     ownerAddress?: string;
     stealthMeta?: string;
     employeeId?: string;
-    /** Client roster hint — rehydrate after serverless cold start */
-    name?: string;
     fiat?: "ARS" | "PEN";
     payments?: Array<{ employeeId: string; amount: string }>;
     reason?: string;
