@@ -8,6 +8,10 @@ import {
   reclaimStealthPoolNotes,
   shieldStealthViaSpp,
 } from "@/lib/spp/shield";
+import {
+  loadLocalVeilRegistration,
+  saveLocalVeilRegistration,
+} from "@/lib/stealth/vns-local";
 
 type Meta = { encoded: string; spendingPubKey: string; viewingPubKey: string };
 type Payment = { stealthAddress: string; ephemeralPubKey: string; viewTag: number; memoHint: string };
@@ -53,10 +57,46 @@ export default function StealthPage() {
       setInbox([]);
       return;
     }
-    const res = await fetch(
+    let res = await fetch(
       `/api/names?action=inbox&owner=${encodeURIComponent(wallet.address)}`,
     );
-    const data = await res.json();
+    let data = await res.json();
+
+    // Server registry lives in /tmp + RAM on Vercel — cold starts wipe it.
+    // Re-register from browser cache so refresh keeps your .veil name.
+    if (!data.record) {
+      const local = loadLocalVeilRegistration(wallet.address);
+      if (local) {
+        const restore = await fetch("/api/names", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "register",
+            name: local.name,
+            owner: wallet.address,
+          }),
+        });
+        const restored = await restore.json();
+        if (restored.ok && restored.record) {
+          saveLocalVeilRegistration({
+            name: restored.record.name,
+            fqdn: restored.record.fqdn,
+            owner: wallet.address,
+          });
+          res = await fetch(
+            `/api/names?action=inbox&owner=${encodeURIComponent(wallet.address)}`,
+          );
+          data = await res.json();
+        }
+      }
+    } else if (data.record?.name) {
+      saveLocalVeilRegistration({
+        name: data.record.name,
+        fqdn: data.record.fqdn,
+        owner: wallet.address,
+      });
+    }
+
     setMyName(data.record ?? null);
     setInbox(data.inbox ?? []);
   }, [wallet.address]);
@@ -243,6 +283,11 @@ export default function StealthPage() {
       });
       const data = await res.json();
       if (!data.ok) throw new Error(data.error);
+      saveLocalVeilRegistration({
+        name: data.record.name,
+        fqdn: data.record.fqdn,
+        owner: wallet.address,
+      });
       setMyName(data.record);
       setStatus(`Registered ${data.record.fqdn}`);
       setDesiredName("");

@@ -179,9 +179,21 @@ class VeilNameRegistry {
     if (!opts.owner.startsWith("G") || opts.owner.length < 56) {
       throw new Error("Owner must be a Stellar G… address (connect Freighter)");
     }
-    if (this.byName.has(v.name)) throw new Error(`${toFqdn(v.name)} is already taken`);
-    const existing = this.byOwner.get(opts.owner);
-    if (existing) throw new Error(`Wallet already registered as ${toFqdn(existing)}`);
+
+    // Idempotent restore after serverless memory wipe / client rehydrate.
+    const byName = this.byName.get(v.name);
+    if (byName) {
+      if (byName.owner === opts.owner) return byName;
+      throw new Error(`${toFqdn(v.name)} is already taken`);
+    }
+    const existingName = this.byOwner.get(opts.owner);
+    if (existingName) {
+      const existing = this.byName.get(existingName);
+      if (existing) {
+        if (existingName === v.name) return existing;
+        throw new Error(`Wallet already registered as ${toFqdn(existingName)}`);
+      }
+    }
 
     const meta = metaForOwner(opts.owner);
     const record: VeilNameRecord = {
