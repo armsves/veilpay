@@ -10,6 +10,7 @@ const nav = [
   { href: "/app/stealth", label: "Stealth" },
   { href: "/app/private-pay", label: "Private pay" },
   { href: "/app/payroll", label: "Payroll" },
+  { href: "/app/confidential", label: "Confidential" },
   { href: "/app/cross-border", label: "Cross-border" },
 ];
 

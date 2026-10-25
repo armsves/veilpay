@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { CoverageTrafficLight } from "@/components/CoverageTrafficLight";
 
 type Solvency = {
   assetsUsdc: string;
@@ -19,13 +20,6 @@ export default function OverviewPage() {
       .then((d) => setSolvency(d.solvency))
       .catch(() => undefined);
   }, []);
-
-  const coverageLabel =
-    solvency == null
-      ? "—"
-      : !Number.isFinite(solvency.coverage)
-        ? "∞"
-        : `${(solvency.coverage * 100).toFixed(2)}%`;
 
   return (
     <div className="space-y-8">
@@ -48,15 +42,10 @@ export default function OverviewPage() {
           <p className="display mt-2 text-3xl">{solvency?.liabilitiesUsdc ?? "0"} USDC</p>
         </div>
         <div className="panel p-5">
-          <p className="text-sm text-[var(--cream-dim)]">Coverage</p>
-          <p className="display mt-2 text-3xl">{coverageLabel}</p>
-          <p className="mt-2">
-            {solvency?.panicHalt ? (
-              <span className="pill pill-danger">Panic halt</span>
-            ) : (
-              <span className="pill pill-ok">Solvent</span>
-            )}
-          </p>
+          <CoverageTrafficLight
+            ratio={solvency == null ? null : solvency.coverage}
+            panicHalt={solvency?.panicHalt}
+          />
         </div>
       </div>
 
@@ -71,6 +60,11 @@ export default function OverviewPage() {
             href: "/app/private-pay",
             title: "Private payments",
             body: "Nethermind SPP pool — deposit, private transfer, withdraw.",
+          },
+          {
+            href: "/app/confidential",
+            title: "Confidential token",
+            body: "OZ register + deposit with solvency Hooks on testnet.",
           },
           {
             href: "/app/payroll",

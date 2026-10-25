@@ -1,6 +1,6 @@
 /**
  * Confidential payroll on Stellar testnet.
- * Wraps OZ stellar-confidential semantics + Veilpay solvency guard.
+ * Demo ledger mirroring OZ confidential token + SolvencyHooks (B/L gate).
  *
  * Flow: employer deposits USDC → confidential credit → pay employees
  * (amounts hidden, addresses visible) → employee unwrap → Pollar Sandbox offramp.

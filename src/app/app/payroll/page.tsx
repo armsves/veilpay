@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { CoverageTrafficLight } from "@/components/CoverageTrafficLight";
 import { useWallet } from "@/components/WalletProvider";
 import { OpenPollarRamp } from "@/components/OpenPollarRamp";
 import { loadLocalRoster, saveLocalRoster } from "@/lib/confidential/payroll-local";
@@ -281,13 +282,6 @@ export default function PayrollPage() {
     }
   }
 
-  const coverage =
-    solvency == null
-      ? "—"
-      : !Number.isFinite(solvency.coverage)
-        ? "∞"
-        : `${(solvency.coverage * 100).toFixed(1)}%`;
-
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
       <div className="flex shrink-0 flex-wrap items-end justify-between gap-3">
@@ -295,7 +289,7 @@ export default function PayrollPage() {
           <h1 className="display text-3xl tracking-tight">Payroll</h1>
           <p className="mt-0.5 text-sm text-[var(--cream-dim)]">
             Employees by <code className="text-[var(--mint)]">.veil</code> · private SPP payouts
-            (amounts hidden) · solvency-gated confidential ledger
+            (amounts hidden) · confidential token · solvency Hooks
           </p>
         </div>
         {status && (
@@ -309,7 +303,6 @@ export default function PayrollPage() {
         {[
           { label: "Assets B", value: solvency?.assetsUsdc ?? "0" },
           { label: "Liabilities L", value: solvency?.liabilitiesUsdc ?? "0" },
-          { label: "Coverage", value: coverage },
           {
             label: "Halt",
             value: solvency?.panicHalt ? "PANIC" : "OPEN",
@@ -321,13 +314,20 @@ export default function PayrollPage() {
             <p className="text-[10px] uppercase tracking-wider text-[var(--cream-dim)]">{m.label}</p>
             <p
               className={`display text-xl leading-tight ${
-                m.danger ? "text-[var(--danger)]" : ""
+                "danger" in m && m.danger ? "text-[var(--danger)]" : ""
               }`}
             >
               {m.value}
             </p>
           </div>
         ))}
+        <div className="panel flex items-center px-3 py-2.5">
+          <CoverageTrafficLight
+            compact
+            ratio={solvency == null ? null : solvency.coverage}
+            panicHalt={solvency?.panicHalt}
+          />
+        </div>
       </div>
 
       <div className="grid min-h-0 flex-1 gap-3 lg:grid-cols-2">

@@ -1,11 +1,11 @@
 /**
- * Pool solvency guard — ratio monitor + unbalance revert + panic halt.
- * Designed to sit beside OZ stellar-confidential (v0.8.0) on testnet.
- *
- * Layers:
+ * Off-chain mirror of SolvencyHooks on the confidential token
+ * (`NEXT_PUBLIC_CONFIDENTIAL_TOKEN_ID`). Same rules as on-chain:
  * 1) Gate: reject deposit/withdraw that would leave B < L
  * 2) Monitor: detect B < L after external drains
- * 3) Panic halt: freeze all pool ops until governance rescue
+ * 3) Panic halt: freeze ops until governance rescue
+ *
+ * On-chain truth: token Hooks panic (atomic reverse) on WOULD_UNBALANCE.
  */
 
 export type SolvencySnapshot = {
