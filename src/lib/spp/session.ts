@@ -332,6 +332,59 @@ export async function createSppClient(opts?: {
 }
 
 /**
+ * Derive + register SPP privacy keys and wait until recipientLookup sees them.
+ * Used by Stealth name claim so payroll can transferToKeys this owner.
+ */
+export async function ensureSppKeysOnChain(
+  address: string,
+  opts?: { onProgress?: (msg: string) => void },
+): Promise<SppSession> {
+  const push = opts?.onProgress ?? (() => undefined);
+  push("Deriving SPP privacy keys (Freighter may prompt)…");
+  const s = await createSppClient({ userAddress: address });
+
+  // createSppClient swallows register errors — retry and surface real failures.
+  push("Publishing privacy keys on-chain…");
+  try {
+    const hash = await s.account.registerPublicKeys();
+    if (hash) push(`Register submitted ${String(hash).slice(0, 12)}…`);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (!/already|registered|exist|duplicate/i.test(msg)) {
+      if (/fund|balance|underfunded|insufficient|fee|trapped/i.test(msg)) {
+        throw new Error(
+          `SPP register needs testnet XLM for fees on this Freighter account. ${msg}`,
+        );
+      }
+      throw e instanceof Error ? e : new Error(msg);
+    }
+  }
+
+  for (let round = 1; round <= 8; round++) {
+    push(`Syncing registry (${round}/8)…`);
+    await s.client.sync();
+    const lookup = await s.client.recipientLookup(address);
+    if (lookup?.entry) {
+      push("SPP keys visible on-chain");
+      return s;
+    }
+    // Re-try register mid-loop once if still missing (tx may have been dropped).
+    if (round === 3 || round === 6) {
+      try {
+        await s.account.registerPublicKeys();
+      } catch {
+        /* already registered or transient */
+      }
+    }
+    await sleep(1000);
+  }
+
+  throw new Error(
+    "SPP keys not on-chain yet — fund Freighter with a few testnet XLM, close other Veilpay tabs, then Connect SPP again",
+  );
+}
+
+/**
  * Deposit into the pool so notes belong to `ownerAddress`, while `stealthSigner`
  * pays the Soroban tx / SAC from the stealth burner.
  *

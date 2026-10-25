@@ -9,7 +9,11 @@ import {
   reclaimStealthPoolNotes,
   shieldStealthViaSpp,
 } from "@/lib/spp/shield";
-import { createSppClient, isSppLockError } from "@/lib/spp/session";
+import {
+  createSppClient,
+  ensureSppKeysOnChain,
+  isSppLockError,
+} from "@/lib/spp/session";
 import {
   loadLocalVeilRegistration,
   saveLocalVeilRegistration,
@@ -85,12 +89,9 @@ export default function StealthPage() {
         setStatus("Registering SPP privacy keys — approve Freighter if prompted…");
       }
       try {
-        const s = await createSppClient({ userAddress: wallet.address });
-        await s.client.sync();
-        const lookup = await s.client.recipientLookup(wallet.address);
-        if (!lookup?.entry) {
-          throw new Error("SPP keys not on-chain yet — try Connect SPP again");
-        }
+        await ensureSppKeysOnChain(wallet.address, {
+          onProgress: (msg) => setStatus(msg),
+        });
         setSppReady(true);
         const msg = "SPP ready — payroll can pay your .veil privately";
         setStatus(msg);
