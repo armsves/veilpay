@@ -1,10 +1,11 @@
 /**
- * Veilpay × Pollar — testnet Sandbox ramps (SEP-24).
+ * Veilpay × Pollar — TestNet ramps (SEP-24 / REST providers).
  *
- * Dashboard: TestNet → Ramps → Providers → "Pollar Sandbox" (ARS / PEN).
  * Docs: https://docs.pollar.xyz/docs/core-concepts/ramps
+ * Dashboard: dashboard.pollar.xyz → Ramps → Providers (enable Anclap / Sandbox sell)
  *
- * No mock bank — Pollar Sandbox is the fiat on/off-ramp on Stellar testnet.
+ * Live corridors come from the Pollar API (`/api/pollar/routes`), not this list.
+ * The list below is the operator checklist for typical LATAM sandbox corridors.
  */
 
 export type RampDirection = "onramp" | "offramp";
@@ -12,41 +13,23 @@ export type RampDirection = "onramp" | "offramp";
 export type PollarSandboxCorridor = {
   id: string;
   direction: "buy" | "sell";
-  country: "AR" | "PE";
-  fiat: "ARS" | "PEN";
-  rail: "SEP_24";
-  provider: "pollar-sandbox";
+  country: "AR" | "PE" | "BR" | "MX";
+  fiat: "ARS" | "PEN" | "BRL" | "MXN";
+  rail: "SEP_24" | "REST";
+  provider: string;
   note: string;
 };
 
-/** Mirrors enabled corridors on Pollar Sandbox (TestNet). */
+/** Typical TestNet corridors — enable matching Sell routes in the dashboard. */
 export const pollarSandboxCorridors: PollarSandboxCorridor[] = [
-  {
-    id: "buy-ars",
-    direction: "buy",
-    country: "AR",
-    fiat: "ARS",
-    rail: "SEP_24",
-    provider: "pollar-sandbox",
-    note: "ARS → ARS on Stellar (no FX)",
-  },
   {
     id: "sell-ars",
     direction: "sell",
     country: "AR",
     fiat: "ARS",
     rail: "SEP_24",
-    provider: "pollar-sandbox",
-    note: "ARS on Stellar → ARS fiat (no FX)",
-  },
-  {
-    id: "buy-pen",
-    direction: "buy",
-    country: "PE",
-    fiat: "PEN",
-    rail: "SEP_24",
-    provider: "pollar-sandbox",
-    note: "PEN → PEN on Stellar (no FX)",
+    provider: "anclap",
+    note: "ARS on Stellar → ARS fiat (hosted SEP-24)",
   },
   {
     id: "sell-pen",
@@ -54,8 +37,26 @@ export const pollarSandboxCorridors: PollarSandboxCorridor[] = [
     country: "PE",
     fiat: "PEN",
     rail: "SEP_24",
-    provider: "pollar-sandbox",
-    note: "PEN on Stellar → PEN fiat (no FX)",
+    provider: "anclap",
+    note: "PEN on Stellar → PEN fiat (hosted SEP-24)",
+  },
+  {
+    id: "buy-ars",
+    direction: "buy",
+    country: "AR",
+    fiat: "ARS",
+    rail: "SEP_24",
+    provider: "anclap",
+    note: "ARS fiat → ARS on Stellar",
+  },
+  {
+    id: "buy-pen",
+    direction: "buy",
+    country: "PE",
+    fiat: "PEN",
+    rail: "SEP_24",
+    provider: "anclap",
+    note: "PEN fiat → PEN on Stellar",
   },
 ];
 
@@ -66,13 +67,14 @@ export function hasPollarKey() {
 /**
  * Offramp path for confidential payroll:
  * 1) unwrap confidential → transparent Stellar asset (public amount)
- * 2) open Pollar Sandbox SEP-24 sell corridor (ARS/PEN)
+ * 2) send / withdraw to Pollar-registered wallet
+ * 3) Pollar KYC + quote + bank payout
  */
 export type ConfidentialOfframpPlan = {
   steps: Array<{ id: string; title: string; detail: string }>;
   corridor: PollarSandboxCorridor;
   requiresUnwrap: true;
-  provider: "pollar-sandbox";
+  provider: string;
 };
 
 export function planConfidentialOfframp(opts: {
@@ -82,40 +84,44 @@ export function planConfidentialOfframp(opts: {
   const corridor = pollarSandboxCorridors.find(
     (c) => c.direction === "sell" && c.fiat === opts.fiat,
   );
-  if (!corridor) throw new Error(`No Pollar Sandbox sell corridor for ${opts.fiat}`);
+  if (!corridor) throw new Error(`No Pollar sell corridor template for ${opts.fiat}`);
 
   return {
     requiresUnwrap: true,
-    provider: "pollar-sandbox",
+    provider: corridor.provider,
     corridor,
     steps: [
       {
         id: "unwrap",
         title: "Unwrap confidential balance",
-        detail: `Withdraw ${opts.amountLabel} from the solvency-gated confidential pool to transparent Stellar ${opts.fiat} (amount becomes public at the boundary).`,
+        detail: `Withdraw ${opts.amountLabel} from the solvency-gated confidential pool to transparent Stellar (amount becomes public at the boundary).`,
       },
       {
-        id: "pollar-quote",
-        title: "Quote Pollar Sandbox",
-        detail: `SEP-24 sell ${opts.fiat} → ${opts.fiat} via Pollar Sandbox on TestNet.`,
+        id: "fund-pollar",
+        title: "Fund Pollar wallet",
+        detail: "Send the unwrapped asset to the user's Pollar-registered G… address.",
       },
       {
-        id: "pollar-hosted",
-        title: "Complete hosted offramp",
-        detail: "User finishes KYC / payout details inside the Pollar / anchor hosted flow.",
+        id: "pollar-kyc",
+        title: "Complete KYC",
+        detail: "Pass identity verification required by the sell corridor.",
+      },
+      {
+        id: "pollar-offramp",
+        title: "One-click bank cash-out",
+        detail: `Quote + create offramp order; enter bank details; Pollar settles ${opts.fiat} to the user's account.`,
       },
     ],
   };
 }
 
-/** Soft integration helper — opens docs when SDK key missing. */
 export function pollarIntegrationStatus() {
   return {
     configured: hasPollarKey(),
     network: "testnet" as const,
-    provider: "Pollar Sandbox",
+    provider: "Pollar ramps (Anclap / dashboard providers)",
     corridors: pollarSandboxCorridors,
-    dashboardHint: "dashboard.pollar.xyz → TestNet → Ramps → Pollar Sandbox",
+    dashboardHint: "dashboard.pollar.xyz → Ramps → Providers → enable Sell corridors",
     sdk: "@pollar/react / @pollar/core ≥ 0.12",
     docs: "https://docs.pollar.xyz/docs/core-concepts/ramps",
   };

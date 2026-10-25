@@ -11,7 +11,7 @@ const nav = [
   { href: "/app/private-pay", label: "Private pay" },
   { href: "/app/payroll", label: "Payroll" },
   { href: "/app/confidential", label: "Confidential" },
-  { href: "/app/cross-border", label: "Cross-border" },
+  { href: "/app/cross-border", label: "Cash out" },
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {

@@ -541,10 +541,15 @@ export default function ConfidentialPage() {
               </div>
               <p className="text-xs text-[var(--cream-dim)]">
                 Spendable → public XLM. Amount becomes visible; solvency Hooks can revert.
+                Paste your{" "}
+                <Link href="/app/cross-border" className="text-[var(--mint)] underline">
+                  Pollar cash-out
+                </Link>{" "}
+                receive address to fund bank offramp.
               </p>
               <input
                 className="input w-full font-mono text-sm"
-                placeholder="To G… (blank = you)"
+                placeholder="To G… (Pollar address or blank = you)"
                 value={withdrawTo}
                 onChange={(e) => setWithdrawTo(e.target.value)}
                 disabled={busy}

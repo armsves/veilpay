@@ -28,7 +28,7 @@ export default function OverviewPage() {
         <h1 className="display text-4xl tracking-tight sm:text-5xl">Your private operating account</h1>
         <p className="mt-3 max-w-2xl text-[var(--cream-dim)]">
           Modules are separate by design: stealth (testnet / mainnet-intents), confidential payroll with
-          auto-halt, and Pollar Sandbox cross-border ramps.
+          auto-halt, and Pollar TestNet bank cash-out.
         </p>
       </div>
 
@@ -73,8 +73,8 @@ export default function OverviewPage() {
           },
           {
             href: "/app/cross-border",
-            title: "Cross-border",
-            body: "Pollar Sandbox SEP-24 ARS/PEN — TestNet fiat rails.",
+            title: "Cash out",
+            body: "Pollar account · KYC · one-click offramp to bank (TestNet).",
           },
         ].map((c) => (
           <Link key={c.href} href={c.href} className="panel block p-6 transition hover:border-[rgba(61,186,140,0.35)]">
