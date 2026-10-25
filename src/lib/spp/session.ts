@@ -2,8 +2,11 @@
  * Browser-only Stellar Private Payments session.
  * Deposit / private transfer / withdraw against Nethermind testnet pools.
  *
- * OPFS allows only one sync access handle — open Storage once per page and
- * reuse the Client shell for every account (Freighter + stealth burners).
+ * OPFS allows only one sync access handle per origin. Re-opening Storage in the
+ * same page after dispose races the dying worker (NoModificationAllowedError /
+ * “another tab”) and Client.dispose() can throw “null pointer passed to rust”.
+ * Recovery path: stop sync → wipe → full page reload (never Storage.open twice
+ * in one document lifetime after a failed/closed client).
  */
 
 "use client";
@@ -11,7 +14,6 @@
 import { sppAssetUrls, SPP_DEFAULT_BOOTNODE_URL, SPP_XLM_POOL_ID } from "./config";
 
 export type SppSession = {
-  // Client/account/pool come from the WASM SDK; keep loose to avoid circular typings.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   client: any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -30,9 +32,13 @@ type SharedRuntime = {
 };
 
 const SPP_LOCK_CHANNEL = "veilpay-spp-lock";
+/** After wipe, reload then auto-connect. */
+export const SPP_AFTER_WIPE_KEY = "veilpay-spp-after-wipe";
 
 let sharedBoot: Promise<SharedRuntime> | null = null;
 let lockChannel: BroadcastChannel | null = null;
+/** True once this document successfully opened Storage — do not open again here. */
+let storageOpenedInThisDocument = false;
 
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
@@ -40,16 +46,16 @@ function sleep(ms: number) {
 
 export function isSppLockError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err);
-  return /local database|Access Handle|OPFS|another tab|another window|NoModificationAllowed|database/i.test(
+  return /local database|Access Handle|OPFS|another tab|another window|NoModificationAllowed|null pointer/i.test(
     msg,
   );
 }
 
-/** Ask other Veilpay tabs to drop their SPP OPFS handle. */
+/** Ask other Veilpay tabs to reload so they drop their OPFS Access Handle. */
 export function signalOtherTabsToReleaseSpp() {
   try {
     const bc = new BroadcastChannel(SPP_LOCK_CHANNEL);
-    bc.postMessage({ type: "release" });
+    bc.postMessage({ type: "reload" });
     bc.close();
   } catch {
     /* BroadcastChannel unavailable */
@@ -61,8 +67,11 @@ function ensureLockListener() {
   try {
     lockChannel = new BroadcastChannel(SPP_LOCK_CHANNEL);
     lockChannel.onmessage = (ev) => {
-      if (ev.data?.type === "release") {
-        void releaseSppRuntime();
+      if (ev.data?.type === "reload" || ev.data?.type === "release") {
+        void softReleaseSppRuntime().finally(() => {
+          // Full navigation is the only reliable way to drop CreateSyncAccessHandle.
+          window.location.reload();
+        });
       }
     };
   } catch {
@@ -78,6 +87,13 @@ async function loadJson<T>(url: string): Promise<T> {
 
 async function bootSharedRuntime(): Promise<SharedRuntime> {
   ensureLockListener();
+
+  if (storageOpenedInThisDocument) {
+    throw new Error(
+      "SPP storage was already opened in this tab. Reload the page to reconnect (OPFS allows only one Access Handle).",
+    );
+  }
+
   const spp = await import("stellar-private-payments");
   await spp.default();
 
@@ -94,41 +110,27 @@ async function bootSharedRuntime(): Promise<SharedRuntime> {
   const bootnodeUrl =
     process.env.NEXT_PUBLIC_SPP_BOOTNODE_URL?.trim() || SPP_DEFAULT_BOOTNODE_URL;
 
-  let lastErr: unknown;
-  for (let attempt = 1; attempt <= 6; attempt++) {
-    try {
-      // One OPFS DB handle for the whole tab — a second Storage.open() panics.
-      const storage = await spp.Storage.open({
-        workerUrl: sppAssetUrls.storageWorkerUrl,
-      });
+  signalOtherTabsToReleaseSpp();
+  await sleep(400);
 
-      const client = await spp.Client.new({
-        rpcUrl,
-        storage,
-        contractConfig: contractConfig as never,
-        circuitsBaseUrl: sppAssetUrls.circuitsBaseUrl,
-        circuitLock: circuitLock as never,
-        storageWorkerUrl: sppAssetUrls.storageWorkerUrl,
-        proverWorkerUrl: sppAssetUrls.proverWorkerUrl,
-        bootnodeUrl,
-      });
+  const storage = await spp.Storage.open({
+    workerUrl: sppAssetUrls.storageWorkerUrl,
+  });
+  storageOpenedInThisDocument = true;
 
-      await client.backgroundSync();
-      return { client, networkPassphrase, rpcUrl };
-    } catch (e) {
-      lastErr = e;
-      if (!isSppLockError(e) || attempt === 6) break;
-      signalOtherTabsToReleaseSpp();
-      await releaseSppRuntime();
-      await sleep(500 * attempt);
-    }
-  }
+  const client = await spp.Client.new({
+    rpcUrl,
+    storage,
+    contractConfig: contractConfig as never,
+    circuitsBaseUrl: sppAssetUrls.circuitsBaseUrl,
+    circuitLock: circuitLock as never,
+    storageWorkerUrl: sppAssetUrls.storageWorkerUrl,
+    proverWorkerUrl: sppAssetUrls.proverWorkerUrl,
+    bootnodeUrl,
+  });
 
-  throw lastErr instanceof Error
-    ? lastErr
-    : new Error(
-        "Another tab is using Veilpay’s SPP database. Close other Veilpay / Private pay / Stealth tabs, wait 2s, then reload.",
-      );
+  await client.backgroundSync();
+  return { client, networkPassphrase, rpcUrl };
 }
 
 /** Shared Client + Storage for this tab (lazy). Failed boots are not cached. */
@@ -137,6 +139,7 @@ export function getSharedSppRuntime() {
   if (!sharedBoot) {
     sharedBoot = bootSharedRuntime().catch((e) => {
       sharedBoot = null;
+      // Allow a reload-based retry; keep storageOpenedInThisDocument if open() succeeded then Client.new failed.
       throw e;
     });
   }
@@ -144,10 +147,11 @@ export function getSharedSppRuntime() {
 }
 
 /**
- * Fully stop background sync + dispose the WASM client and wait for the
- * OPFS sync access handle to release. Safe to call when boot never succeeded.
+ * Stop indexer only — do NOT call client.dispose()/free().
+ * Dispose races the storage worker and throws “null pointer passed to rust”
+ * while leaving the OPFS Access Handle held until the document unloads.
  */
-export async function releaseSppRuntime(): Promise<void> {
+export async function softReleaseSppRuntime(): Promise<void> {
   const pending = sharedBoot;
   sharedBoot = null;
   if (!pending) return;
@@ -158,20 +162,19 @@ export async function releaseSppRuntime(): Promise<void> {
     } catch {
       /* ignore */
     }
-    try {
-      rt.client.dispose?.();
-    } catch {
-      /* ignore */
-    }
   } catch {
-    /* previous boot failed — nothing to dispose */
+    /* previous boot failed */
   }
-  await sleep(900);
+  await sleep(200);
 }
 
-/** @deprecated use releaseSppRuntime — kept for call sites that fire-and-forget */
+/** @deprecated prefer softReleaseSppRuntime + reload */
+export async function releaseSppRuntime(): Promise<void> {
+  await softReleaseSppRuntime();
+}
+
 export function resetSharedSppRuntime() {
-  void releaseSppRuntime();
+  void softReleaseSppRuntime();
 }
 
 /** Normalize 0x-hex for SPP key comparisons. */
@@ -191,13 +194,13 @@ export function sppKeysMatch(
 }
 
 /**
- * Tear down the WASM client and delete SPP OPFS / localStorage so the next
- * `createSppClient` re-derives Freighter privacy keys from scratch.
+ * Stop sync, wipe OPFS, then the caller must reload the page before createSppClient.
  */
 export async function wipeSppLocalWallet(): Promise<void> {
   signalOtherTabsToReleaseSpp();
-  await sleep(300);
-  await releaseSppRuntime();
+  await sleep(500);
+  await softReleaseSppRuntime();
+  await sleep(500);
 
   try {
     const root = await navigator.storage.getDirectory();
@@ -217,7 +220,7 @@ export async function wipeSppLocalWallet(): Promise<void> {
       }
     }
   } catch {
-    /* OPFS unavailable */
+    /* OPFS unavailable / still locked until reload */
   }
 
   try {
@@ -246,9 +249,29 @@ export async function wipeSppLocalWallet(): Promise<void> {
   } catch {
     /* ignore */
   }
+}
 
-  // Extra settle time so the next Storage.open() does not race a dying worker.
-  await sleep(700);
+/** Wipe + flag + reload — only safe way to re-open SPP storage in this origin. */
+export async function wipeSppLocalWalletAndReload(): Promise<void> {
+  await wipeSppLocalWallet();
+  try {
+    sessionStorage.setItem(SPP_AFTER_WIPE_KEY, "1");
+  } catch {
+    /* ignore */
+  }
+  window.location.reload();
+}
+
+export function consumeSppAfterWipeFlag(): boolean {
+  try {
+    if (sessionStorage.getItem(SPP_AFTER_WIPE_KEY) === "1") {
+      sessionStorage.removeItem(SPP_AFTER_WIPE_KEY);
+      return true;
+    }
+  } catch {
+    /* ignore */
+  }
+  return false;
 }
 
 export async function createSppClient(opts?: {
@@ -259,22 +282,7 @@ export async function createSppClient(opts?: {
   signer?: import("stellar-private-payments").WalletSigner;
 }) {
   const { FreighterSigner } = await import("stellar-private-payments/freighter");
-
-  let client: SharedRuntime["client"];
-  let networkPassphrase: string;
-  let rpcUrl: string;
-  try {
-    ({ client, networkPassphrase, rpcUrl } = await getSharedSppRuntime());
-  } catch (e) {
-    if (isSppLockError(e)) {
-      signalOtherTabsToReleaseSpp();
-      await releaseSppRuntime();
-      await sleep(1000);
-      ({ client, networkPassphrase, rpcUrl } = await getSharedSppRuntime());
-    } else {
-      throw e;
-    }
-  }
+  const { client, networkPassphrase, rpcUrl } = await getSharedSppRuntime();
 
   const signer = opts?.signer ?? new FreighterSigner();
   const account = await client.account(

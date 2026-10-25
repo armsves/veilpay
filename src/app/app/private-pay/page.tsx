@@ -5,13 +5,14 @@ import Link from "next/link";
 import { useWallet } from "@/components/WalletProvider";
 import { sppDocs, SPP_XLM_POOL_ID } from "@/lib/spp/config";
 import {
+  consumeSppAfterWipeFlag,
   createSppClient,
   isSppLockError,
-  releaseSppRuntime,
   signalOtherTabsToReleaseSpp,
+  softReleaseSppRuntime,
   sppKeysMatch,
   stroopsToXlm,
-  wipeSppLocalWallet,
+  wipeSppLocalWalletAndReload,
   xlmToStroops,
   type SppSession,
 } from "@/lib/spp/session";
@@ -82,39 +83,69 @@ export default function PrivatePayPage() {
     [push],
   );
 
+  const finishConnect = useCallback(
+    async (address: string, fromWipe: boolean) => {
+      setBusy(true);
+      setError(null);
+      push(
+        fromWipe
+          ? "Post-wipe reload — approve Freighter key derivation, then syncing…"
+          : "Booting SPP (WASM + circuits from CDN)…",
+      );
+      try {
+        signalOtherTabsToReleaseSpp();
+        const s = await createSppClient({ userAddress: address });
+        setSession(s);
+        push(`Connected as ${address.slice(0, 6)}… · pool ${s.poolContract.slice(0, 8)}…`);
+        if (fromWipe) {
+          const local = await s.account.privacyKeys();
+          for (let round = 1; round <= 4; round++) {
+            push(`Sync round ${round}/4…`);
+            await s.client.sync();
+            const lookup = await s.client.recipientLookup(address);
+            const entry = lookup?.entry;
+            if (entry && sppKeysMatch(local, entry)) {
+              setKeyMismatch(false);
+              push("Local keys match on-chain registry");
+            }
+            const bal = await s.pool.balance();
+            if (bal > 0n) {
+              push(`Recovered shielded balance ${stroopsToXlm(bal)} XLM — Withdraw to Freighter`);
+              break;
+            }
+            await new Promise((r) => setTimeout(r, 1000));
+          }
+        }
+        await refreshBalance(s, address);
+      } catch (e) {
+        if (isSppLockError(e)) {
+          setError(
+            "SPP OPFS still locked. Close every other Veilpay tab, then click Reload page.",
+          );
+          await softReleaseSppRuntime();
+        } else {
+          setError(e instanceof Error ? e.message : String(e));
+        }
+      } finally {
+        setBusy(false);
+      }
+    },
+    [push, refreshBalance],
+  );
+
   async function connectSpp() {
     if (!wallet.address) {
       setError("Connect Freighter on Testnet first");
       return;
     }
-    setBusy(true);
-    setError(null);
-    push("Booting SPP (WASM + circuits from CDN)…");
-    try {
-      signalOtherTabsToReleaseSpp();
-      const s = await createSppClient({ userAddress: wallet.address });
-      setSession(s);
-      push(`Connected as ${wallet.address.slice(0, 6)}… · pool ${s.poolContract.slice(0, 8)}…`);
-      await refreshBalance(s, wallet.address);
-    } catch (e) {
-      if (isSppLockError(e)) {
-        setError(
-          "SPP database is locked — close every other Veilpay tab (Stealth, Private pay, pay pages), wait 2 seconds, reload, then Connect again.",
-        );
-        await releaseSppRuntime();
-      } else {
-        setError(e instanceof Error ? e.message : String(e));
-      }
-    } finally {
-      setBusy(false);
-    }
+    await finishConnect(wallet.address, false);
   }
 
   async function resetSppWallet() {
     if (!wallet.address) return;
     if (
       !confirm(
-        "Wipe this site’s SPP local wallet and re-derive Freighter privacy keys? Use this to fix a key mismatch so sync can decrypt your shielded notes.",
+        "Wipe this site’s SPP wallet and reload? Freighter will re-derive privacy keys after reload. Close other Veilpay tabs first.",
       )
     ) {
       return;
@@ -122,61 +153,21 @@ export default function PrivatePayPage() {
     setBusy(true);
     setError(null);
     setSession(null);
-    setBalance("—");
-    setKeyMismatch(false);
+    push("Stopping SPP sync, wiping OPFS, then reloading (required to release Access Handle)…");
     try {
-      push("Wiping all Veilpay OPFS + SPP local state…");
-      await wipeSppLocalWallet();
-      push("Approve Freighter: “Privacy Pool Key Derivation [v2] (Nethermind)” — required for a fresh derive");
-      const s = await createSppClient({ userAddress: wallet.address });
-      setSession(s);
-      const local = await s.account.privacyKeys();
-      // Give bootnode/indexer a few sync rounds before declaring failure.
-      let matched = false;
-      let bal = 0n;
-      for (let round = 1; round <= 4; round++) {
-        push(`Sync round ${round}/4…`);
-        await s.client.sync();
-        const lookup = await s.client.recipientLookup(wallet.address);
-        const entry = lookup?.entry;
-        if (entry && sppKeysMatch(local, entry)) {
-          matched = true;
-          setKeyMismatch(false);
-          push("Local keys match on-chain registry");
-        }
-        bal = await s.pool.balance();
-        if (bal > 0n) break;
-        await new Promise((r) => setTimeout(r, 1000));
-      }
-      setBalance(stroopsToXlm(bal));
-      if (bal > 0n) {
-        push(`Recovered shielded balance ${stroopsToXlm(bal)} XLM — Withdraw to Freighter`);
-        setKeyMismatch(false);
-      } else if (!matched) {
-        setKeyMismatch(true);
-        push(
-          "Still mismatched / 0 XLM — registry keys aren’t from this Freighter v2 derive. Open the Nethermind demo with the same Freighter (keep its site data) → Withdraw.",
-        );
-      } else {
-        setKeyMismatch(false);
-        push(
-          "Keys match but still 0 notes — try Stealth → Reclaim, or the Nethermind demo if notes were spent to older keys before a registry update.",
-        );
-      }
-      await refreshBalance(s, wallet.address);
+      await wipeSppLocalWalletAndReload();
+      // page unloads
     } catch (e) {
-      if (isSppLockError(e)) {
-        setError(
-          "SPP database locked during reset — close other Veilpay tabs, reload this page, then try Reset again.",
-        );
-        await releaseSppRuntime();
-      } else {
-        setError(e instanceof Error ? e.message : String(e));
-      }
-    } finally {
+      setError(e instanceof Error ? e.message : String(e));
       setBusy(false);
     }
   }
+
+  // After Reset → reload, auto-connect once Freighter address is ready.
+  useEffect(() => {
+    if (!wallet.address || !consumeSppAfterWipeFlag()) return;
+    void finishConnect(wallet.address, true);
+  }, [wallet.address, finishConnect]);
 
   async function runDeposit() {
     if (!session) return;
