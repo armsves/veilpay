@@ -6,14 +6,19 @@
 
 export const SPP_NPM = "stellar-private-payments@0.2.1";
 
-/** Circuit + worker artifacts via jsDelivr (too large to ship in the Vercel bundle). */
-export const SPP_CDN = `https://cdn.jsdelivr.net/npm/${SPP_NPM}`;
+/**
+ * Circuit + worker artifacts.
+ * jsDelivr returns 403 for this package (too large for their npm CDN).
+ * Nethermind hosts the same dist/ on the official demo’s GitHub Pages.
+ */
+export const SPP_ASSET_ORIGIN =
+  "https://nethermindeth.github.io/stellar-private-payments/js/stellar-private-payments/dist";
 
 export const sppAssetUrls = {
-  circuitsBaseUrl: `${SPP_CDN}/dist/circuits/`,
-  circuitsLockUrl: `${SPP_CDN}/dist/circuits/circuits.json`,
-  storageWorkerUrl: `${SPP_CDN}/dist/workers/storage-worker.js`,
-  proverWorkerUrl: `${SPP_CDN}/dist/workers/prover-worker.js`,
+  circuitsBaseUrl: `${SPP_ASSET_ORIGIN}/circuits/`,
+  circuitsLockUrl: `${SPP_ASSET_ORIGIN}/circuits/circuits.json`,
+  storageWorkerUrl: `${SPP_ASSET_ORIGIN}/workers/storage-worker.js`,
+  proverWorkerUrl: `${SPP_ASSET_ORIGIN}/workers/prover-worker.js`,
   deploymentsUrl: "/spp-deployments.json",
 } as const;
 
