@@ -18,6 +18,10 @@ function addressOf(wallet: { address?: string } | null): string | null {
   return wallet.address;
 }
 
+function shortAddr(a: string) {
+  return `${a.slice(0, 6)}…${a.slice(-4)}`;
+}
+
 export function PollarCashOut() {
   const keyOk = hasPollarKey();
   const [mounted, setMounted] = useState(false);
@@ -44,18 +48,17 @@ export function PollarCashOut() {
 
   if (!keyOk) {
     return (
-      <div className="panel p-5">
-        <p className="text-sm text-[var(--danger)]">
-          Missing <code>NEXT_PUBLIC_POLLAR_KEY</code>. Add the TestNet publishable
-          key from dashboard.pollar.xyz → Build → API Keys.
-        </p>
+      <div className="panel flex min-h-0 flex-1 items-center p-4 text-sm text-[var(--danger)]">
+        Missing <code className="mx-1">NEXT_PUBLIC_POLLAR_KEY</code>
       </div>
     );
   }
 
   if (!mounted) {
     return (
-      <div className="panel p-5 text-sm text-[var(--cream-dim)]">Loading Pollar…</div>
+      <div className="panel flex min-h-0 flex-1 items-center p-4 text-sm text-[var(--cream-dim)]">
+        Loading Pollar…
+      </div>
     );
   }
 
@@ -126,47 +129,66 @@ function PollarCashOutInner({
     openRampModal();
   };
 
+  const balPreview =
+    walletBalance.step === "loaded"
+      ? walletBalance.data.balances
+          .filter((b) => b.balance && b.balance !== "0")
+          .slice(0, 3)
+          .map((b) => `${b.code} ${b.balance}`)
+          .join(" · ")
+      : null;
+
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-auto">
-      <div className="grid gap-3 lg:grid-cols-[1.1fr_0.9fr]">
-        <section className="panel flex flex-col gap-4 p-5">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <h2 className="display text-xl tracking-tight">1 · Pollar account</h2>
-              <p className="mt-1 text-sm text-[var(--cream-dim)]">
-                Sign in (Google / email). Pollar provisions a TestNet Stellar wallet —
-                that G… address receives transparent tokens after confidential unwrap.
-              </p>
-            </div>
-            <div className="pollar-wallet-slot shrink-0">
+    <div className="grid min-h-0 flex-1 grid-rows-[auto_1fr] gap-2 overflow-hidden">
+      <div className="grid min-h-0 gap-2 sm:grid-cols-3">
+        {/* Account */}
+        <section className="panel flex min-h-0 flex-col gap-2 p-3">
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="display text-lg leading-none tracking-tight">1 · Account</h2>
+            <div className="pollar-wallet-slot shrink-0 scale-90 origin-right">
               <WalletButton />
             </div>
           </div>
-
           {isAuthenticated && address ? (
-            <div className="rounded-xl border border-[var(--line)] bg-[var(--ink-2)] p-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="pill pill-ok">
-                  {verified ? "Session verified" : "Signing in…"}
+            <>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="pill pill-ok !py-0.5 text-[10px]">
+                  {verified ? "Verified" : "…"}
                 </span>
-                <button type="button" className="btn btn-ghost !py-1 !px-2 text-xs" onClick={() => logout()}>
+                <button
+                  type="button"
+                  className="text-[10px] text-[var(--cream-dim)] underline"
+                  onClick={() => logout()}
+                >
                   Sign out
                 </button>
               </div>
-              <p className="mt-2 text-xs uppercase tracking-wide text-[var(--cream-dim)]">
-                Receive address (registered)
-              </p>
-              <code className="mt-1 block break-all text-sm text-[var(--mint)]">{address}</code>
-              <div className="mt-3 flex flex-wrap gap-2">
-                <button type="button" className="btn btn-ghost !py-1.5 !px-3 text-xs" onClick={() => void copyAddress()}>
-                  Copy address
-                </button>
-                <button type="button" className="btn btn-ghost !py-1.5 !px-3 text-xs" onClick={() => openReceiveModal()}>
-                  Show QR
+              <button
+                type="button"
+                className="truncate text-left font-mono text-xs text-[var(--mint)]"
+                title={address}
+                onClick={() => void copyAddress()}
+              >
+                {shortAddr(address)}
+              </button>
+              <div className="mt-auto flex flex-wrap gap-1">
+                <button
+                  type="button"
+                  className="btn btn-ghost !px-2 !py-1 text-[11px]"
+                  onClick={() => void copyAddress()}
+                >
+                  Copy
                 </button>
                 <button
                   type="button"
-                  className="btn btn-ghost !py-1.5 !px-3 text-xs"
+                  className="btn btn-ghost !px-2 !py-1 text-[11px]"
+                  onClick={() => openReceiveModal()}
+                >
+                  QR
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost !px-2 !py-1 text-[11px]"
                   onClick={() => {
                     void refreshWalletBalance();
                     openWalletBalanceModal();
@@ -175,115 +197,81 @@ function PollarCashOutInner({
                   Balances
                 </button>
               </div>
-              {walletBalance.step === "loaded" && walletBalance.data.balances.length > 0 ? (
-                <ul className="mt-3 space-y-1 text-sm text-[var(--cream-dim)]">
-                  {walletBalance.data.balances.slice(0, 6).map((b) => (
-                    <li key={`${b.chain ?? "stellar"}-${b.code}-${b.issuer ?? "native"}`}>
-                      {b.code}: {b.balance ?? "—"}
-                    </li>
-                  ))}
-                </ul>
+              {balPreview ? (
+                <p className="truncate text-[11px] text-[var(--cream-dim)]">{balPreview}</p>
               ) : null}
-            </div>
+            </>
           ) : (
-            <button type="button" className="btn btn-primary self-start" onClick={() => openLoginModal()}>
-              Create / open Pollar account
+            <button
+              type="button"
+              className="btn btn-primary mt-auto !py-1.5 text-sm"
+              onClick={() => openLoginModal()}
+            >
+              Sign in
             </button>
           )}
         </section>
 
-        <section className="panel flex flex-col gap-4 p-5">
-          <div>
-            <h2 className="display text-xl tracking-tight">2 · KYC</h2>
-            <p className="mt-1 text-sm text-[var(--cream-dim)]">
-              Sandbox / SEP-24 providers ask for identity before bank payout. Complete
-              it once; the ramp modal will also prompt if a corridor still needs it.
-            </p>
-          </div>
-          <button type="button" className="btn btn-amber self-start" onClick={runKyc}>
+        {/* KYC */}
+        <section className="panel flex min-h-0 flex-col gap-2 p-3">
+          <h2 className="display text-lg leading-none tracking-tight">2 · KYC</h2>
+          <p className="text-xs leading-snug text-[var(--cream-dim)]">
+            Sandbox identity before bank payout. Ramp may prompt again if needed.
+          </p>
+          <button type="button" className="btn btn-amber mt-auto !py-1.5 text-sm" onClick={runKyc}>
             Pass KYC
           </button>
-          <p className="text-xs text-[var(--cream-dim)]">
-            In sandbox, verification is usually instant or uses test credentials from
-            the provider card in the Pollar dashboard.
+        </section>
+
+        {/* Offramp */}
+        <section className="panel flex min-h-0 flex-col gap-2 p-3">
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="display text-lg leading-none tracking-tight">3 · Bank</h2>
+            {routes == null ? (
+              <span className="pill !py-0.5 text-[10px]">…</span>
+            ) : routesReady ? (
+              <span className="pill pill-ok !py-0.5 text-[10px]">ARS sell live</span>
+            ) : (
+              <span className="pill pill-danger !py-0.5 text-[10px]">No corridor</span>
+            )}
+          </div>
+          <p className="text-xs leading-snug text-[var(--cream-dim)]">
+            Sell Stellar ARS → sandbox bank. Need ARS in the Pollar wallet.
           </p>
+          <div className="mt-auto flex flex-wrap gap-1.5">
+            <button
+              type="button"
+              className="btn btn-ghost !px-2 !py-1.5 text-xs"
+              onClick={() => onRefreshRoutes()}
+            >
+              Refresh
+            </button>
+            <button
+              type="button"
+              className="btn btn-primary flex-1 !py-1.5 text-sm"
+              onClick={runOfframp}
+              disabled={!routesReady && isAuthenticated}
+            >
+              Cash out
+            </button>
+          </div>
+          {!routesReady && routes?.dashboardHint ? (
+            <p className="line-clamp-2 text-[10px] text-[var(--amber)]">{routes.dashboardHint}</p>
+          ) : null}
+          {routes?.error ? (
+            <p className="truncate text-[10px] text-[var(--danger)]">{routes.error}</p>
+          ) : null}
         </section>
       </div>
 
-      <section className="panel flex flex-col gap-4 p-5">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h2 className="display text-xl tracking-tight">3 · One-click cash out</h2>
-            <p className="mt-1 max-w-2xl text-sm text-[var(--cream-dim)]">
-              Opens Pollar&apos;s ramp widget: pick <strong>Sell / offramp</strong>, amount,
-              bank / CBU fields the corridor requires, then authorize. Pollar settles the
-              token leg and pays the sandbox bank account.
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <button type="button" className="btn btn-ghost !py-1.5 !px-3 text-sm" onClick={() => onRefreshRoutes()}>
-              Refresh corridors
-            </button>
-            <button type="button" className="btn btn-primary" onClick={runOfframp} disabled={!routesReady && isAuthenticated}>
-              Cash out to bank
-            </button>
-          </div>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2 text-sm">
-          {routes == null ? (
-            <span className="pill">Checking corridors…</span>
-          ) : routes.ok && routeCount > 0 ? (
-            <span className="pill pill-ok">{routeCount} offramp corridor(s) live</span>
-          ) : (
-            <span className="pill pill-danger">No offramp corridors enabled</span>
-          )}
-          {routes?.error ? (
-            <span className="text-[var(--danger)]">{routes.error}</span>
-          ) : null}
-        </div>
-
-        {!routesReady && (
-          <div className="rounded-xl border border-[var(--amber)]/40 bg-[rgba(224,164,90,0.08)] p-4 text-sm">
-            <p className="font-medium text-[var(--amber)]">Enable a TestNet sell provider</p>
-            <ol className="mt-2 list-decimal space-y-1 pl-5 text-[var(--cream-dim)]">
-              <li>
-                Open{" "}
-                <a className="text-[var(--mint)] underline" href="https://dashboard.pollar.xyz" target="_blank" rel="noreferrer">
-                  dashboard.pollar.xyz
-                </a>{" "}
-                → app <strong>Veilpay</strong> (TestNet)
-              </li>
-              <li>
-                <strong>Ramps → Providers</strong> — turn on <strong>Anclap</strong> (SEP-24 hosted)
-                and/or any Sandbox provider shown for TestNet
-              </li>
-              <li>Enable at least one <strong>Sell</strong> corridor (ARS / PEN / local fiat)</li>
-              <li>
-                <strong>Build → Allowed origins</strong> — add{" "}
-                <code>https://veilpay-henna.vercel.app</code> and{" "}
-                <code>http://localhost:3000</code>
-              </li>
-              <li>Return here and click Refresh corridors, then Cash out</li>
-            </ol>
-          </div>
-        )}
-      </section>
-
-      <section className="panel p-5">
-        <h2 className="display text-xl tracking-tight">Confidential → bank path</h2>
-        <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm text-[var(--cream-dim)]">
-          <li>
-            On{" "}
-            <Link href="/app/confidential" className="text-[var(--mint)] underline">
-              Confidential
-            </Link>
-            , unlock and <strong>withdraw</strong> to the Pollar receive address above
-            (amount becomes public at the unwrap boundary).
-          </li>
-          <li>Confirm the balance under Pollar Balances.</li>
-          <li>Pass KYC if prompted, then Cash out — enter bank details in the Pollar modal.</li>
-        </ol>
+      <section className="panel flex min-h-0 items-center gap-3 overflow-hidden p-3">
+        <p className="shrink-0 display text-base leading-none tracking-tight">Path</p>
+        <p className="min-w-0 truncate text-xs text-[var(--cream-dim)]">
+          <Link href="/app/confidential" className="text-[var(--mint)] underline">
+            Confidential
+          </Link>
+          {" → withdraw to Pollar address → KYC → Cash out (ARS)"}
+        </p>
       </section>
     </div>
   );

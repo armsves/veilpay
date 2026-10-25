@@ -7,35 +7,27 @@ export default function CrossBorderPage() {
   const status = pollarIntegrationStatus();
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
-      <div className="flex shrink-0 flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="display text-3xl tracking-tight">Cash out</h1>
-          <p className="mt-0.5 text-sm text-[var(--cream-dim)]">
-            Pollar TestNet · register wallet · KYC · one-click bank offramp
+    <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
+        <div className="min-w-0">
+          <h1 className="display text-2xl leading-none tracking-tight sm:text-3xl">Cash out</h1>
+          <p className="mt-0.5 truncate text-xs text-[var(--cream-dim)] sm:text-sm">
+            Pollar Sandbox · wallet · KYC · ARS bank offramp
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex shrink-0 flex-wrap items-center gap-1.5">
           {status.configured ? (
-            <span className="pill pill-ok">Pollar key set</span>
+            <span className="pill pill-ok !py-0.5 text-[10px]">Key set</span>
           ) : (
-            <span className="pill pill-danger">Key missing</span>
+            <span className="pill pill-danger !py-0.5 text-[10px]">Key missing</span>
           )}
           <a
-            className="btn btn-ghost !py-1.5 !px-3 text-sm"
+            className="btn btn-ghost !px-2.5 !py-1 text-xs"
             href="https://dashboard.pollar.xyz"
             target="_blank"
             rel="noreferrer"
           >
             Dashboard
-          </a>
-          <a
-            className="btn btn-ghost !py-1.5 !px-3 text-sm"
-            href="https://docs.pollar.xyz/docs/core-concepts/ramps"
-            target="_blank"
-            rel="noreferrer"
-          >
-            Docs
           </a>
         </div>
       </div>

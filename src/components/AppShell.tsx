@@ -58,7 +58,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <main
         className={clsx(
           "mx-auto w-full max-w-6xl px-5",
-          fillViewport ? "flex min-h-0 flex-1 flex-col py-4" : "py-8",
+          fillViewport ? "flex min-h-0 flex-1 flex-col py-3" : "py-8",
         )}
       >
         {children}
