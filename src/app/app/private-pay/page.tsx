@@ -23,8 +23,20 @@ export default function PrivatePayPage() {
 
   const refreshBalance = useCallback(async (s: SppSession) => {
     try {
+      push("Syncing pool events (needed to see notes from stealth Shield)…");
+      await s.client.sync();
+      const notes = await s.pool.notes();
+      const unspent = notes.filter((n: { spent?: boolean }) => !n.spent);
       const b = await s.pool.balance();
       setBalance(stroopsToXlm(b));
+      push(
+        `Shielded balance ${stroopsToXlm(b)} XLM · ${unspent.length} unspent note(s) / ${notes.length} total`,
+      );
+      if (b === 0n) {
+        push(
+          "0 here usually means sync has not decrypted your notes yet — wait for indexer, hit Refresh, or confirm Shield finished the private transfer step.",
+        );
+      }
     } catch (e) {
       setBalance("?");
       push(`balance: ${e instanceof Error ? e.message : String(e)}`);
@@ -42,7 +54,7 @@ export default function PrivatePayPage() {
     try {
       const s = await createSppClient({ userAddress: wallet.address });
       setSession(s);
-      push(`Connected · pool ${s.poolContract.slice(0, 8)}…`);
+      push(`Connected as ${wallet.address.slice(0, 6)}… · pool ${s.poolContract.slice(0, 8)}…`);
       await refreshBalance(s);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));

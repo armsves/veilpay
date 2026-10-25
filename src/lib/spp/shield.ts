@@ -114,6 +114,14 @@ export async function shieldStealthViaSpp(opts: {
     const shielded = await stealthSession.pool.balance();
     if (shielded > 0n) {
       push(`Private transfer pass ${pass}: ${stroopsToXlm(shielded)} XLM → you (inside pool)…`);
+      // Confirm owner keys are on the registry before encrypting the note to them.
+      try {
+        await stealthSession.client.recipientLookup(opts.ownerAddress);
+      } catch {
+        throw new Error(
+          "Your Freighter is not SPP-registered yet — open Private pay → Connect SPP once, then Shield again.",
+        );
+      }
       await stealthSession.pool.transfer(opts.ownerAddress, shielded);
       totalTransferred += shielded;
     }
@@ -125,14 +133,25 @@ export async function shieldStealthViaSpp(opts: {
     );
   }
 
+  push("Syncing your Freighter SPP notes to confirm the private receive…");
+  const ownerSession = await createSppClient({ userAddress: opts.ownerAddress });
+  await ownerSession.client.sync();
+  const ownerBal = await ownerSession.pool.balance();
   const leftoverXlm = await fetchXlmBalance(opts.stealthAddress);
-  push(
-    `Shielded via SPP. ~${leftoverXlm.toFixed(2)} XLM stays on the burner (1 XLM reserve + fee headroom).`,
-  );
+
+  if (ownerBal === 0n && totalTransferred > 0n) {
+    push(
+      `On-chain transfer submitted (${stroopsToXlm(totalTransferred)} XLM) but your Freighter pool still reads 0 — hit Sync/Refresh on Private pay after the indexer catches up.`,
+    );
+  } else {
+    push(
+      `Your SPP shielded balance is now ${stroopsToXlm(ownerBal)} XLM. Open Private pay → Withdraw to Freighter. ~${leftoverXlm.toFixed(2)} XLM remains on the burner.`,
+    );
+  }
 
   return {
     depositedXlm: stroopsToXlm(totalDeposited),
-    transferredXlm: stroopsToXlm(totalTransferred),
+    transferredXlm: stroopsToXlm(ownerBal > 0n ? ownerBal : totalTransferred),
     owner: opts.ownerAddress,
     stealthAddress: opts.stealthAddress,
     leftoverXlm,
