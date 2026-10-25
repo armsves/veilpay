@@ -443,9 +443,16 @@ export default function PayrollPage() {
       push(`Private SPP pay ${payAmount} XLM → ${label}`);
       await spp.pool.transferToKeys(lookup.entry.noteKey, lookup.entry.encryptionKey, stroops);
       await settleAfterSppSpend(before, stroops);
-      await act("mark_spp_paid", { employeeId: emp.id, xlmAmount: payAmount }, { quiet: true });
+      const book = {
+        employeeId: emp.id,
+        name: emp.name,
+        veilName: emp.veilName,
+        stellarAddress: emp.stellarAddress,
+        ownerAddress: emp.ownerAddress,
+      };
+      await act("mark_spp_paid", { ...book, xlmAmount: payAmount }, { quiet: true });
       // Demo confidential ledger — best-effort; SPP transfer is the source of truth.
-      await act("pay", { employeeId: emp.id, amount: payAmount }, { quiet: true });
+      await act("pay", { ...book, amount: payAmount }, { quiet: true });
       await refreshSpp();
       push("SPP private transfer confirmed (amount hidden on-chain)");
       notify(true, `Paid ${payAmount} XLM privately to ${label}`);
@@ -496,8 +503,15 @@ export default function PayrollPage() {
           }
           await spp.pool.transferToKeys(lookup.entry.noteKey, lookup.entry.encryptionKey, stroops);
           await settleAfterSppSpend(before, stroops);
-          await act("mark_spp_paid", { employeeId: emp.id, xlmAmount: payAmount }, { quiet: true });
-          await act("pay", { employeeId: emp.id, amount: payAmount }, { quiet: true });
+          const book = {
+            employeeId: emp.id,
+            name: emp.name,
+            veilName: emp.veilName,
+            stellarAddress: emp.stellarAddress,
+            ownerAddress: emp.ownerAddress,
+          };
+          await act("mark_spp_paid", { ...book, xlmAmount: payAmount }, { quiet: true });
+          await act("pay", { ...book, amount: payAmount }, { quiet: true });
           const i = next.findIndex((e) => e.id === emp.id);
           if (i >= 0) {
             next[i] = { ...next[i], ...emp, lastSppPayXlm: payAmount, sppRegistered: true };

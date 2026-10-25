@@ -88,8 +88,55 @@ export class ConfidentialPayrollService {
     if (this.employees.length === n) throw new Error("Employee not found");
   }
 
-  markSppPaid(employeeId: string, xlmAmount: string) {
-    const emp = this.employees.find((e) => e.id === employeeId);
+  /**
+   * Rehydrate a roster row after Vercel cold-start wiped in-memory state.
+   * Prefer matching id, then .veil name, else insert with the client id.
+   */
+  ensureEmployee(hint: {
+    id: string;
+    name?: string;
+    veilName?: string;
+    stellarAddress?: string;
+    ownerAddress?: string;
+  }): Employee {
+    const veil = hint.veilName?.trim().toLowerCase().replace(/\.veil$/i, "");
+    let emp =
+      this.employees.find((e) => e.id === hint.id) ??
+      (veil ? this.employees.find((e) => e.veilName === veil) : undefined);
+    if (emp) {
+      if (hint.stellarAddress?.startsWith("G")) emp.stellarAddress = hint.stellarAddress;
+      if (hint.ownerAddress?.startsWith("G")) emp.ownerAddress = hint.ownerAddress;
+      return emp;
+    }
+    emp = {
+      id: hint.id,
+      name: hint.name || veil || hint.id,
+      veilName: veil || undefined,
+      stellarAddress: hint.stellarAddress?.startsWith("G")
+        ? hint.stellarAddress
+        : hint.ownerAddress?.startsWith("G")
+          ? hint.ownerAddress
+          : "GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+      ownerAddress: hint.ownerAddress,
+      confidentialBalance: 0n,
+    };
+    this.employees.push(emp);
+    return emp;
+  }
+
+  markSppPaid(
+    employeeId: string,
+    xlmAmount: string,
+    hint?: {
+      name?: string;
+      veilName?: string;
+      stellarAddress?: string;
+      ownerAddress?: string;
+    },
+  ) {
+    const emp = hint
+      ? this.ensureEmployee({ id: employeeId, ...hint })
+      : this.employees.find((e) => e.id === employeeId);
     if (!emp) throw new Error("Employee not found");
     emp.lastSppPayXlm = xlmAmount;
     return emp;
@@ -99,18 +146,29 @@ export class ConfidentialPayrollService {
    * Confidential pay: pool liabilities already include treasury deposits.
    * Transfer moves private claim employer→employee without changing B/L.
    */
-  payEmployee(employeeId: string, usdcAmount: string) {
+  payEmployee(
+    employeeId: string,
+    usdcAmount: string,
+    hint?: {
+      name?: string;
+      veilName?: string;
+      stellarAddress?: string;
+      ownerAddress?: string;
+    },
+  ) {
     this.solvency.haltIfInsolvent();
     if (this.solvency.snapshot().panicHalt) {
       throw new Error("Pool panic-halted — payroll frozen");
     }
     const amount = parseUsdc(usdcAmount);
-    const emp = this.employees.find((e) => e.id === employeeId);
+    const emp = hint
+      ? this.ensureEmployee({ id: employeeId, ...hint })
+      : this.employees.find((e) => e.id === employeeId);
     if (!emp) throw new Error("Employee not found");
     // In real OZ flow this is a confidential_transfer with UltraHonk proof.
     emp.confidentialBalance += amount;
     return {
-      employeeId,
+      employeeId: emp.id,
       amount: formatUsdc(amount),
       confidentialBalance: formatUsdc(emp.confidentialBalance),
       note: "Confidential transfer (demo ledger). On-chain: stellar-confidential transfer circuit.",
