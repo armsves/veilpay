@@ -2,12 +2,14 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { toast } from "react-toastify";
 import { useWallet } from "@/components/WalletProvider";
 import {
   MIN_SHIELD_BALANCE_XLM,
   reclaimStealthPoolNotes,
   shieldStealthViaSpp,
 } from "@/lib/spp/shield";
+import { createSppClient, isSppLockError } from "@/lib/spp/session";
 import {
   loadLocalVeilRegistration,
   saveLocalVeilRegistration,
@@ -50,11 +52,75 @@ export default function StealthPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
+  /** Freighter owner has SPP privacy keys on-chain (payroll can pay .veil). */
+  const [sppReady, setSppReady] = useState<boolean | null>(null);
+
+  const checkSppReady = useCallback(async (address: string): Promise<boolean> => {
+    try {
+      const s = await createSppClient({ userAddress: address, skipKeySetup: true });
+      await s.client.sync();
+      const lookup = await s.client.recipientLookup(address);
+      const ok = Boolean(lookup?.entry);
+      setSppReady(ok);
+      return ok;
+    } catch {
+      setSppReady(false);
+      return false;
+    }
+  }, []);
+
+  /** Derive + register SPP keys so payroll can transferToKeys this owner. */
+  const connectSppForPayroll = useCallback(
+    async (opts?: { silent?: boolean }) => {
+      if (!wallet.address) {
+        if (!opts?.silent) {
+          setError("Connect Freighter first");
+          toast.error("Connect Freighter first");
+        }
+        return false;
+      }
+      if (!opts?.silent) {
+        setBusy(true);
+        setError(null);
+        setStatus("Registering SPP privacy keys — approve Freighter if prompted…");
+      }
+      try {
+        const s = await createSppClient({ userAddress: wallet.address });
+        await s.client.sync();
+        const lookup = await s.client.recipientLookup(wallet.address);
+        if (!lookup?.entry) {
+          throw new Error("SPP keys not on-chain yet — try Connect SPP again");
+        }
+        setSppReady(true);
+        const msg = "SPP ready — payroll can pay your .veil privately";
+        setStatus(msg);
+        toast.success(msg);
+        return true;
+      } catch (e) {
+        setSppReady(false);
+        if (isSppLockError(e)) {
+          const msg =
+            "SPP storage locked — close other Veilpay tabs, reload, then Connect SPP again";
+          setError(msg);
+          toast.error(msg);
+        } else if (!opts?.silent) {
+          const msg = e instanceof Error ? e.message : String(e);
+          setError(msg);
+          toast.error(msg);
+        }
+        return false;
+      } finally {
+        if (!opts?.silent) setBusy(false);
+      }
+    },
+    [wallet.address],
+  );
 
   const loadMyName = useCallback(async () => {
     if (!wallet.address) {
       setMyName(null);
       setInbox([]);
+      setSppReady(null);
       return;
     }
     let res = await fetch(
@@ -99,7 +165,12 @@ export default function StealthPage() {
 
     setMyName(data.record ?? null);
     setInbox(data.inbox ?? []);
-  }, [wallet.address]);
+    if (data.record && wallet.address) {
+      void checkSppReady(wallet.address);
+    } else {
+      setSppReady(null);
+    }
+  }, [wallet.address, checkSppReady]);
 
   useEffect(() => {
     void loadMyName();
@@ -266,6 +337,7 @@ export default function StealthPage() {
   async function registerName() {
     if (!wallet.address) {
       setError("Connect Freighter to register a .veil name");
+      toast.error("Connect Freighter to register a .veil name");
       return;
     }
     setBusy(true);
@@ -289,11 +361,16 @@ export default function StealthPage() {
         owner: wallet.address,
       });
       setMyName(data.record);
-      setStatus(`Registered ${data.record.fqdn}`);
       setDesiredName("");
+      setStatus(`Registered ${data.record.fqdn} — registering SPP keys…`);
+      toast.success(`Registered ${data.record.fqdn}`);
+      // Same Freighter session: publish privacy keys so payroll can pay this .veil.
+      setBusy(false);
+      await connectSppForPayroll();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(msg);
+      toast.error(msg);
       setBusy(false);
     }
   }
@@ -397,7 +474,8 @@ export default function StealthPage() {
         <h1 className="display text-4xl tracking-tight">Stealth names</h1>
         <p className="mt-3 max-w-2xl text-[var(--cream-dim)]">
           Register <code className="text-[var(--mint)]">you.veil</code>. Every resolve returns a
-          fresh stealth address; your Freighter key stays private.
+          fresh stealth address; your Freighter key stays private. Claiming also registers SPP
+          keys so payroll can pay you privately.
         </p>
       </div>
 
@@ -435,14 +513,33 @@ export default function StealthPage() {
               </Link>{" "}
               · resolved {myName.resolveCount}×
             </p>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <button className="btn btn-primary !py-2 !px-4 text-sm" disabled={busy} onClick={() => void previewResolve()}>
                 Resolve fresh address
               </button>
               <Link className="btn btn-ghost !py-2 !px-4 text-sm" href={myName.payUrl}>
                 Open pay page
               </Link>
+              {sppReady === true ? (
+                <span className="pill !bg-[var(--ok)]/20 !text-[var(--ok)]">SPP ready for payroll</span>
+              ) : (
+                <button
+                  type="button"
+                  className="btn btn-amber !py-2 !px-4 text-sm"
+                  disabled={busy || !wallet.address}
+                  onClick={() => void connectSppForPayroll()}
+                  title="Register privacy keys so employers can SPP-pay your .veil"
+                >
+                  {busy ? "Connecting…" : sppReady === false ? "Connect SPP for payroll" : "Connect SPP…"}
+                </button>
+              )}
             </div>
+            {sppReady === false && (
+              <p className="text-xs text-[var(--amber)]">
+                Your .veil is claimed, but SPP keys are missing — Connect SPP once so payroll can pay you
+                privately (Freighter may prompt).
+              </p>
+            )}
             {resolvedPay && (
               <div className="break-all rounded-xl bg-black/25 p-3 text-xs">
                 <p className="text-[var(--cream-dim)]">One-time receive</p>
