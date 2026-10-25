@@ -99,6 +99,63 @@ export function resetSharedSppRuntime() {
   sharedBoot = null;
 }
 
+/** Normalize 0x-hex for SPP key comparisons. */
+export function normSppHex(hex: string): string {
+  return hex.trim().toLowerCase().replace(/^0x/, "");
+}
+
+export function sppKeysMatch(
+  a: { notePublicKey?: string; encryptionPublicKey?: string; noteKey?: string; encryptionKey?: string },
+  b: { notePublicKey?: string; encryptionPublicKey?: string; noteKey?: string; encryptionKey?: string },
+): boolean {
+  const noteA = a.notePublicKey ?? a.noteKey ?? "";
+  const noteB = b.notePublicKey ?? b.noteKey ?? "";
+  const encA = a.encryptionPublicKey ?? a.encryptionKey ?? "";
+  const encB = b.encryptionPublicKey ?? b.encryptionKey ?? "";
+  return normSppHex(noteA) === normSppHex(noteB) && normSppHex(encA) === normSppHex(encB);
+}
+
+/**
+ * Tear down the WASM client and delete SPP OPFS / localStorage so the next
+ * `createSppClient` re-derives Freighter privacy keys from scratch.
+ * Privacy keys are deterministic (SEP-53 sign of the v2 KDF message) — a clean
+ * re-derive should match the on-chain registry when it was registered the same way.
+ */
+export async function wipeSppLocalWallet(): Promise<void> {
+  resetSharedSppRuntime();
+  // Let dispose finish before removing OPFS files the worker may hold.
+  await new Promise((r) => setTimeout(r, 200));
+
+  try {
+    const root = await navigator.storage.getDirectory();
+    const toRemove: string[] = [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    for await (const [name] of (root as any).entries() as AsyncIterable<[string, unknown]>) {
+      if (/spp|sqlite|opfs|sahpool/i.test(name)) toRemove.push(name);
+    }
+    for (const name of toRemove) {
+      try {
+        await root.removeEntry(name, { recursive: true });
+      } catch {
+        /* ignore locked / missing */
+      }
+    }
+  } catch {
+    /* OPFS unavailable */
+  }
+
+  try {
+    const kill: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && /spp|stellar-private|privacy.?pool/i.test(k)) kill.push(k);
+    }
+    for (const k of kill) localStorage.removeItem(k);
+  } catch {
+    /* ignore */
+  }
+}
+
 export async function createSppClient(opts?: {
   poolContract?: string;
   bootnodeUrl?: string;

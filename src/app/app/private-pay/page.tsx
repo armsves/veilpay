@@ -4,7 +4,14 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useWallet } from "@/components/WalletProvider";
 import { sppDocs, SPP_XLM_POOL_ID } from "@/lib/spp/config";
-import { createSppClient, stroopsToXlm, xlmToStroops, type SppSession } from "@/lib/spp/session";
+import {
+  createSppClient,
+  sppKeysMatch,
+  stroopsToXlm,
+  wipeSppLocalWallet,
+  xlmToStroops,
+  type SppSession,
+} from "@/lib/spp/session";
 
 export default function PrivatePayPage() {
   const wallet = useWallet();
@@ -16,9 +23,10 @@ export default function PrivatePayPage() {
   const [busy, setBusy] = useState(false);
   const [log, setLog] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [keyMismatch, setKeyMismatch] = useState(false);
 
   const push = useCallback((line: string) => {
-    setLog((prev) => [line, ...prev].slice(0, 12));
+    setLog((prev) => [line, ...prev].slice(0, 16));
   }, []);
 
   const refreshBalance = useCallback(
@@ -33,27 +41,33 @@ export default function PrivatePayPage() {
         push(
           `Shielded balance ${stroopsToXlm(b)} XLM · ${unspent.length} unspent note(s) / ${notes.length} total`,
         );
-        if (b === 0n && ownerAddress) {
+
+        let mismatch = false;
+        if (ownerAddress) {
           try {
             const local = await s.account.privacyKeys();
             const lookup = await s.client.recipientLookup(ownerAddress);
             const entry = lookup?.entry;
-            if (
-              entry &&
-              (entry.noteKey !== local.notePublicKey ||
-                entry.encryptionKey !== local.encryptionPublicKey)
-            ) {
+            if (entry && !sppKeysMatch(local, entry)) {
+              mismatch = true;
               push(
-                "Registry keys ≠ this browser’s SPP wallet. Notes from transfer(G…) may only decrypt in the app that first registered Freighter (often the Nethermind demo). Open that demo to Withdraw, or Stealth → Reclaim if the burner still holds notes.",
-              );
-            } else {
-              push(
-                "Still 0 after sync — try Stealth → Reclaim on the burner, or the Nethermind SPP demo with the same Freighter.",
+                `Key mismatch — local note ${String(local.notePublicKey).slice(0, 14)}… vs registry ${String(entry.noteKey).slice(0, 14)}…`,
               );
             }
           } catch {
+            /* ignore lookup errors */
+          }
+        }
+        setKeyMismatch(mismatch);
+
+        if (b === 0n) {
+          if (mismatch) {
             push(
-              "Still 0 after sync — try Stealth → Reclaim, or the Nethermind SPP demo with the same Freighter.",
+              "Notes encrypted to registry keys won’t decrypt here. Use Reset SPP wallet below, or Withdraw in the Nethermind demo (don’t clear that site’s data).",
+            );
+          } else {
+            push(
+              "Still 0 after sync — try Stealth → Reclaim on the burner, or Reset SPP wallet below.",
             );
           }
         }
@@ -85,6 +99,47 @@ export default function PrivatePayPage() {
     }
   }
 
+  async function resetSppWallet() {
+    if (!wallet.address) return;
+    if (
+      !confirm(
+        "Wipe this site’s SPP local wallet and re-derive Freighter privacy keys? Use this to fix a key mismatch so sync can decrypt your shielded notes.",
+      )
+    ) {
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    setSession(null);
+    setBalance("—");
+    setKeyMismatch(false);
+    try {
+      push("Wiping Veilpay SPP OPFS + re-deriving keys from Freighter…");
+      await wipeSppLocalWallet();
+      push("Approve the Freighter signature for Privacy Pool Key Derivation…");
+      const s = await createSppClient({ userAddress: wallet.address });
+      setSession(s);
+      const local = await s.account.privacyKeys();
+      await s.client.sync();
+      const lookup = await s.client.recipientLookup(wallet.address);
+      const entry = lookup?.entry;
+      if (entry && sppKeysMatch(local, entry)) {
+        push("Local keys now match the on-chain registry — syncing notes…");
+        setKeyMismatch(false);
+      } else if (entry) {
+        setKeyMismatch(true);
+        push(
+          "Still mismatched after re-derive — registry was registered with different keys. Open the Nethermind demo (same Freighter, do not clear its site data) and Withdraw there.",
+        );
+      }
+      await refreshBalance(s, wallet.address);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function runDeposit() {
     if (!session) return;
     setBusy(true);
@@ -94,7 +149,7 @@ export default function PrivatePayPage() {
       push(`Depositing ${amount} XLM (public ext_amount)…`);
       await session.pool.deposit(stroops);
       push("Deposit confirmed — note created in shielded pool");
-      await refreshBalance(session);
+      await refreshBalance(session, wallet.address ?? undefined);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -111,7 +166,9 @@ export default function PrivatePayPage() {
       const data = await res.json();
       if (!data.ok || !data.record?.owner) throw new Error(data.error ?? "Name not found");
       setRecipient(data.record.owner);
-      push(`Resolved ${data.record.fqdn} → owner ${data.record.owner.slice(0, 6)}… (SPP pays their registered G… privately)`);
+      push(
+        `Resolved ${data.record.fqdn} → owner ${data.record.owner.slice(0, 6)}… (SPP pays their registered G… privately)`,
+      );
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -129,9 +186,10 @@ export default function PrivatePayPage() {
     try {
       const stroops = xlmToStroops(amount);
       push(`Private transfer ${amount} XLM → ${recipient.slice(0, 6)}… (ext_amount 0 on-chain)`);
+      // Prefer local keys when paying yourself / known session; address path uses registry.
       await session.pool.transfer(recipient, stroops);
       push("Private transfer submitted");
-      await refreshBalance(session);
+      await refreshBalance(session, wallet.address ?? undefined);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -148,7 +206,7 @@ export default function PrivatePayPage() {
       push(`Withdrawing ${amount} XLM to Freighter (public)`);
       await session.pool.withdraw(stroops);
       push("Withdraw confirmed");
-      await refreshBalance(session);
+      await refreshBalance(session, wallet.address ?? undefined);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -173,7 +231,12 @@ export default function PrivatePayPage() {
         <p className="mt-3 max-w-2xl text-[var(--cream-dim)]">
           Official Stellar privacy pools — deposit publicly, transfer privately inside the pool,
           withdraw publicly. Amounts and counterparties stay hidden on shielded transfers.{" "}
-          <a className="text-[var(--mint)] underline" href={sppDocs.stellarPrivacy} target="_blank" rel="noreferrer">
+          <a
+            className="text-[var(--mint)] underline"
+            href={sppDocs.stellarPrivacy}
+            target="_blank"
+            rel="noreferrer"
+          >
             developers.stellar.org/privacy
           </a>
         </p>
@@ -185,10 +248,47 @@ export default function PrivatePayPage() {
         </div>
       )}
 
+      {keyMismatch && (
+        <div className="panel space-y-3 border-[rgba(232,180,92,0.45)] p-4 text-sm">
+          <p className="text-[var(--amber)]">
+            Your Freighter is registered on-chain with different SPP keys than this browser wallet.
+            The shielded 3.5 XLM was encrypted to the registry keys — Veilpay cannot decrypt them
+            until keys match (or you withdraw where those keys live).
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              className="btn btn-amber !py-2 !px-4 text-sm"
+              disabled={busy || !wallet.address}
+              onClick={() => void resetSppWallet()}
+            >
+              {busy ? "Resetting…" : "Reset SPP wallet & re-derive"}
+            </button>
+            <a
+              className="btn btn-primary !py-2 !px-4 text-sm"
+              href={sppDocs.demo}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Open Nethermind demo → Withdraw
+            </a>
+            <Link className="btn btn-ghost !py-2 !px-4 text-sm" href="/app/stealth">
+              Stealth → Reclaim
+            </Link>
+          </div>
+          <p className="text-xs text-[var(--cream-dim)]">
+            Do not clear the Nethermind demo’s site data — that OPFS holds the matching private keys.
+            New Veilpay Shields already use local keys (transferToKeys).
+          </p>
+        </div>
+      )}
+
       <div className="panel space-y-4 p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <p className="text-xs text-[var(--cream-dim)]">Shielded balance (SPP pool — not Freighter)</p>
+            <p className="text-xs text-[var(--cream-dim)]">
+              Shielded balance (SPP pool — not Freighter)
+            </p>
             <p className="display text-3xl">{balance} XLM</p>
             <p className="mt-1 text-xs text-[var(--cream-dim)]">
               After stealth Shield, funds land here. Use Withdraw to move XLM into Freighter.
@@ -198,7 +298,11 @@ export default function PrivatePayPage() {
             </p>
           </div>
           {!session ? (
-            <button className="btn btn-primary" disabled={busy || !wallet.address} onClick={() => void connectSpp()}>
+            <button
+              className="btn btn-primary"
+              disabled={busy || !wallet.address}
+              onClick={() => void connectSpp()}
+            >
               {busy ? "Starting…" : "Connect SPP pool"}
             </button>
           ) : (
@@ -213,7 +317,9 @@ export default function PrivatePayPage() {
         </div>
 
         {!wallet.address && (
-          <p className="text-sm text-[var(--amber)]">Connect Freighter on <strong>Testnet</strong> in the header.</p>
+          <p className="text-sm text-[var(--amber)]">
+            Connect Freighter on <strong>Testnet</strong> in the header.
+          </p>
         )}
 
         <label className="block text-sm text-[var(--cream-dim)]">
@@ -222,13 +328,25 @@ export default function PrivatePayPage() {
         </label>
 
         <div className="flex flex-wrap gap-2">
-          <button className="btn btn-primary !py-2 !px-4 text-sm" disabled={busy || !session} onClick={() => void runDeposit()}>
+          <button
+            className="btn btn-primary !py-2 !px-4 text-sm"
+            disabled={busy || !session}
+            onClick={() => void runDeposit()}
+          >
             Deposit
           </button>
-          <button className="btn btn-amber !py-2 !px-4 text-sm" disabled={busy || !session} onClick={() => void runTransfer()}>
+          <button
+            className="btn btn-amber !py-2 !px-4 text-sm"
+            disabled={busy || !session}
+            onClick={() => void runTransfer()}
+          >
             Private transfer
           </button>
-          <button className="btn btn-ghost !py-2 !px-4 text-sm" disabled={busy || !session} onClick={() => void runWithdraw()}>
+          <button
+            className="btn btn-ghost !py-2 !px-4 text-sm"
+            disabled={busy || !session}
+            onClick={() => void runWithdraw()}
+          >
             Withdraw
           </button>
         </div>
@@ -249,7 +367,11 @@ export default function PrivatePayPage() {
             onChange={(e) => setVeilName(e.target.value.toLowerCase())}
           />
           <span className="self-center text-sm text-[var(--mint)]">.veil</span>
-          <button className="btn btn-ghost !py-2 !px-3 text-xs" disabled={busy} onClick={() => void resolveVeilRecipient()}>
+          <button
+            className="btn btn-ghost !py-2 !px-3 text-xs"
+            disabled={busy}
+            onClick={() => void resolveVeilRecipient()}
+          >
             Resolve to owner
           </button>
         </div>
@@ -276,6 +398,20 @@ export default function PrivatePayPage() {
           Official demo
         </a>{" "}
         · <Link className="underline" href="/app/stealth">Veil names</Link>
+        {session && (
+          <>
+            {" "}
+            ·{" "}
+            <button
+              type="button"
+              className="underline"
+              disabled={busy}
+              onClick={() => void resetSppWallet()}
+            >
+              Reset SPP wallet
+            </button>
+          </>
+        )}
       </p>
     </div>
   );
