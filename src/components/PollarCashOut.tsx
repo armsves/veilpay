@@ -32,20 +32,26 @@ function shortAddr(a: string) {
 export function PollarCashOut() {
   const keyOk = hasPollarKey();
   const [mounted, setMounted] = useState(false);
-  const [routes, setRoutes] = useState<RouteStatus | null>(null);
+  const [sellRoutes, setSellRoutes] = useState<RouteStatus | null>(null);
+  const [buyRoutes, setBuyRoutes] = useState<RouteStatus | null>(null);
 
   useEffect(() => setMounted(true), []);
 
   const refreshRoutes = useCallback(async () => {
     try {
-      const res = await fetch("/api/pollar/routes?direction=offramp");
-      const data = (await res.json()) as RouteStatus;
-      setRoutes(data);
+      const [sellRes, buyRes] = await Promise.all([
+        fetch("/api/pollar/routes?direction=offramp"),
+        fetch("/api/pollar/routes?direction=onramp"),
+      ]);
+      setSellRoutes((await sellRes.json()) as RouteStatus);
+      setBuyRoutes((await buyRes.json()) as RouteStatus);
     } catch (e) {
-      setRoutes({
+      const err = {
         ok: false,
         error: e instanceof Error ? e.message : String(e),
-      });
+      };
+      setSellRoutes(err);
+      setBuyRoutes(err);
     }
   }, []);
 
@@ -69,14 +75,22 @@ export function PollarCashOut() {
     );
   }
 
-  return <PollarCashOutInner routes={routes} onRefreshRoutes={refreshRoutes} />;
+  return (
+    <PollarCashOutInner
+      sellRoutes={sellRoutes}
+      buyRoutes={buyRoutes}
+      onRefreshRoutes={refreshRoutes}
+    />
+  );
 }
 
 function PollarCashOutInner({
-  routes,
+  sellRoutes,
+  buyRoutes,
   onRefreshRoutes,
 }: {
-  routes: RouteStatus | null;
+  sellRoutes: RouteStatus | null;
+  buyRoutes: RouteStatus | null;
   onRefreshRoutes: () => void;
 }) {
   const freighter = useWallet();
@@ -101,8 +115,8 @@ function PollarCashOutInner({
   const peekedFor = useRef<string | null>(null);
 
   const address = addressOf(wallet) ?? wallets.map((w) => addressOf(w)).find(Boolean) ?? null;
-  const routeCount = routes?.routeCount ?? 0;
-  const routesReady = Boolean(routes?.ok && routeCount > 0);
+  const sellReady = Boolean(sellRoutes?.ok && (sellRoutes.routeCount ?? 0) > 0);
+  const buyReady = Boolean(buyRoutes?.ok && (buyRoutes.routeCount ?? 0) > 0);
 
   const refreshConf = useCallback(
     async (opts?: { silent?: boolean }) => {
@@ -168,21 +182,33 @@ function PollarCashOutInner({
     });
   };
 
-  const runOfframp = () => {
+  const openRamp = (kind: "buy" | "sell") => {
     if (!isAuthenticated) {
       openLoginModal();
       toast.info("Sign in to Pollar first");
       return;
     }
-    if (!routesReady) {
+    if (kind === "sell" && !sellReady) {
       toast.error(
-        routes?.dashboardHint ??
-          "No offramp corridors enabled — turn on a Sell provider in the Pollar dashboard",
+        sellRoutes?.dashboardHint ??
+          "No Sell corridor — enable Pollar Sandbox Sell ARS in the dashboard",
       );
       return;
     }
+    if (kind === "buy" && !buyReady) {
+      toast.error("No Buy corridor — enable Pollar Sandbox Buy ARS in the dashboard");
+      return;
+    }
     openRampModal();
+    toast.info(
+      kind === "buy"
+        ? "Pick Buy · AR · ARS to mint sandbox pesos into your Pollar wallet"
+        : "Pick Sell · AR · ARS to cash out to the sandbox bank",
+    );
   };
+
+  const runOfframp = () => openRamp("sell");
+  const runOnramp = () => openRamp("buy");
 
   const balPreview =
     walletBalance.step === "loaded"
@@ -337,7 +363,7 @@ function PollarCashOutInner({
               type="button"
               className="btn btn-amber flex-1 !py-1.5 text-sm"
               onClick={runOfframp}
-              disabled={!routesReady && isAuthenticated}
+              disabled={!sellReady && isAuthenticated}
             >
               Verify in cash out
             </button>
@@ -345,18 +371,25 @@ function PollarCashOutInner({
         </section>
 
         <section className="panel flex flex-col gap-2 p-3">
-          <div className="flex items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="display text-lg leading-none tracking-tight">3 · Bank</h2>
-            {routes == null ? (
-              <span className="pill !py-0.5 text-[10px]">…</span>
-            ) : routesReady ? (
-              <span className="pill pill-ok !py-0.5 text-[10px]">ARS sell live</span>
-            ) : (
-              <span className="pill pill-danger !py-0.5 text-[10px]">No corridor</span>
-            )}
+            <div className="flex flex-wrap gap-1">
+              {buyRoutes == null || sellRoutes == null ? (
+                <span className="pill !py-0.5 text-[10px]">…</span>
+              ) : (
+                <>
+                  <span className={`pill !py-0.5 text-[10px] ${buyReady ? "pill-ok" : "pill-danger"}`}>
+                    {buyReady ? "ARS buy" : "No buy"}
+                  </span>
+                  <span className={`pill !py-0.5 text-[10px] ${sellReady ? "pill-ok" : "pill-danger"}`}>
+                    {sellReady ? "ARS sell" : "No sell"}
+                  </span>
+                </>
+              )}
+            </div>
           </div>
           <p className="text-xs leading-snug text-[var(--cream-dim)]">
-            Withdraw conf. → Pollar ARS → sell to sandbox bank.
+            Get sandbox ARS via Buy, then Sell to bank. Available shows in the ramp.
           </p>
           <div className="flex flex-wrap gap-1.5">
             <button
@@ -368,18 +401,26 @@ function PollarCashOutInner({
             </button>
             <button
               type="button"
+              className="btn btn-ghost !px-2 !py-1.5 text-xs"
+              onClick={runOnramp}
+              disabled={!buyReady && isAuthenticated}
+            >
+              Get test ARS
+            </button>
+            <button
+              type="button"
               className="btn btn-primary flex-1 !py-1.5 text-sm"
               onClick={runOfframp}
-              disabled={!routesReady && isAuthenticated}
+              disabled={!sellReady && isAuthenticated}
             >
               Cash out
             </button>
           </div>
-          {!routesReady && routes?.dashboardHint ? (
-            <p className="line-clamp-2 text-[10px] text-[var(--amber)]">{routes.dashboardHint}</p>
+          {!sellReady && sellRoutes?.dashboardHint ? (
+            <p className="line-clamp-2 text-[10px] text-[var(--amber)]">{sellRoutes.dashboardHint}</p>
           ) : null}
-          {routes?.error ? (
-            <p className="truncate text-[10px] text-[var(--danger)]">{routes.error}</p>
+          {sellRoutes?.error ? (
+            <p className="truncate text-[10px] text-[var(--danger)]">{sellRoutes.error}</p>
           ) : null}
         </section>
       </div>
@@ -387,10 +428,11 @@ function PollarCashOutInner({
       <section className="panel flex shrink-0 items-center gap-3 overflow-hidden p-3">
         <p className="shrink-0 display text-base leading-none tracking-tight">Path</p>
         <p className="min-w-0 truncate text-xs text-[var(--cream-dim)]">
+          Get test ARS (Buy) →{" "}
           <Link href="/app/confidential" className="text-[var(--mint)] underline">
             Confidential
           </Link>
-          {" → withdraw to Pollar address → KYC → Cash out (ARS)"}
+          {" withdraw optional → Sell ARS → sandbox bank"}
         </p>
       </section>
     </div>

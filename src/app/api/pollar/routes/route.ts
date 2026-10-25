@@ -56,7 +56,7 @@ export async function GET(req: Request) {
       routes,
       dashboardHint:
         routes.length === 0
-          ? "dashboard.pollar.xyz → your TestNet app → Ramps → Providers — enable Anclap (or Sandbox) and at least one Sell corridor"
+          ? "dashboard.pollar.xyz → Ramps → Providers → Pollar Sandbox — enable Buy and/or Sell ARS corridors"
           : null,
     });
   } catch (e) {

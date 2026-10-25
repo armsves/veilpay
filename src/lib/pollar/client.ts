@@ -28,8 +28,8 @@ export const pollarSandboxCorridors: PollarSandboxCorridor[] = [
     country: "AR",
     fiat: "ARS",
     rail: "SEP_24",
-    provider: "anclap",
-    note: "ARS on Stellar → ARS fiat (hosted SEP-24)",
+    provider: "pollar-sandbox",
+    note: "ARS on Stellar → ARS fiat (hosted Sandbox)",
   },
   {
     id: "sell-pen",
@@ -37,8 +37,8 @@ export const pollarSandboxCorridors: PollarSandboxCorridor[] = [
     country: "PE",
     fiat: "PEN",
     rail: "SEP_24",
-    provider: "anclap",
-    note: "PEN on Stellar → PEN fiat (hosted SEP-24)",
+    provider: "pollar-sandbox",
+    note: "PEN on Stellar → PEN fiat (hosted Sandbox)",
   },
   {
     id: "buy-ars",
@@ -46,8 +46,8 @@ export const pollarSandboxCorridors: PollarSandboxCorridor[] = [
     country: "AR",
     fiat: "ARS",
     rail: "SEP_24",
-    provider: "anclap",
-    note: "ARS fiat → ARS on Stellar",
+    provider: "pollar-sandbox",
+    note: "Sandbox fiat → ARS on Stellar (test mint / hosted buy)",
   },
   {
     id: "buy-pen",
@@ -55,8 +55,8 @@ export const pollarSandboxCorridors: PollarSandboxCorridor[] = [
     country: "PE",
     fiat: "PEN",
     rail: "SEP_24",
-    provider: "anclap",
-    note: "PEN fiat → PEN on Stellar",
+    provider: "pollar-sandbox",
+    note: "Sandbox fiat → PEN on Stellar",
   },
 ];
 
