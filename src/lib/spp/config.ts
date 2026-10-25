@@ -7,18 +7,19 @@
 export const SPP_NPM = "stellar-private-payments@0.2.1";
 
 /**
- * Circuit + worker artifacts.
- * jsDelivr returns 403 for this package (too large for their npm CDN).
- * Nethermind hosts the same dist/ on the official demo’s GitHub Pages.
+ * Circuits: Nethermind GH Pages (jsDelivr 403s the oversized npm package).
+ * Workers: same-origin under /spp/workers — cross-origin Worker() panics
+ * ("failed to spawn worker" / gloo-worker).
  */
-export const SPP_ASSET_ORIGIN =
+export const SPP_CIRCUITS_ORIGIN =
   "https://nethermindeth.github.io/stellar-private-payments/js/stellar-private-payments/dist";
 
 export const sppAssetUrls = {
-  circuitsBaseUrl: `${SPP_ASSET_ORIGIN}/circuits/`,
-  circuitsLockUrl: `${SPP_ASSET_ORIGIN}/circuits/circuits.json`,
-  storageWorkerUrl: `${SPP_ASSET_ORIGIN}/workers/storage-worker.js`,
-  proverWorkerUrl: `${SPP_ASSET_ORIGIN}/workers/prover-worker.js`,
+  circuitsBaseUrl: `${SPP_CIRCUITS_ORIGIN}/circuits/`,
+  circuitsLockUrl: `${SPP_CIRCUITS_ORIGIN}/circuits/circuits.json`,
+  /** Same-origin module workers (cross-origin Worker() panics in gloo-worker). */
+  storageWorkerUrl: "/spp/workers/storage-worker.js",
+  proverWorkerUrl: "/spp/workers/prover-worker.js",
   deploymentsUrl: "/spp-deployments.json",
 } as const;
 
