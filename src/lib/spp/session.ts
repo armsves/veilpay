@@ -10,6 +10,10 @@
 "use client";
 
 import { sppAssetUrls, SPP_DEFAULT_BOOTNODE_URL, SPP_XLM_POOL_ID } from "./config";
+import {
+  clearSppStorageUnlockMeta,
+  openEncryptedSppStorage,
+} from "./storage-unlock";
 
 export type SppSession = {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -138,7 +142,7 @@ async function clearSppBrowserStorage(): Promise<number> {
     const kill: string[] = [];
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i);
-      if (k && /spp|stellar-private|privacy.?pool|opfs/i.test(k)) kill.push(k);
+      if (k && /spp|stellar-private|privacy.?pool|opfs|poolstellar/i.test(k)) kill.push(k);
     }
     for (const k of kill) {
       localStorage.removeItem(k);
@@ -147,6 +151,8 @@ async function clearSppBrowserStorage(): Promise<number> {
   } catch {
     /* ignore */
   }
+
+  clearSppStorageUnlockMeta();
 
   return removed;
 }
@@ -194,9 +200,10 @@ async function bootSharedRuntime(): Promise<SharedRuntime> {
   const bootnodeUrl =
     process.env.NEXT_PUBLIC_SPP_BOOTNODE_URL?.trim() || SPP_DEFAULT_BOOTNODE_URL;
 
-  const storage = await spp.Storage.open({
-    workerUrl: sppAssetUrls.storageWorkerUrl,
-  });
+  // v0.7 SDK: OPFS DB is encrypted; Freighter must unlock (may prompt 1–2 signs).
+  const { FreighterSigner } = await import("stellar-private-payments/freighter");
+  const unlockAddress = await new FreighterSigner().getPublicKey();
+  const storage = await openEncryptedSppStorage(spp.Storage, unlockAddress);
   storageOpenedInThisDocument = true;
 
   const client = await spp.Client.new({
