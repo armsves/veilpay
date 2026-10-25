@@ -1,6 +1,8 @@
 "use client";
 
 import clsx from "clsx";
+import { useEffect, useState } from "react";
+import { CONFIDENTIAL_TOKEN_ID } from "@/lib/confidential/config";
 
 export type CoverageTrafficLightProps = {
   /** B/L ratio. `1` = fully covered. `null` = unknown. `Infinity` = no liabilities. */
@@ -9,8 +11,42 @@ export type CoverageTrafficLightProps = {
   panicHalt?: boolean;
   /** Compact = horizontal lamps only. */
   compact?: boolean;
+  /** Override on-chain invocation count (else fetched from Stellar Expert). */
+  txCount?: number | null;
   className?: string;
 };
+
+function useTokenInvocations(override?: number | null) {
+  const [count, setCount] = useState<number | null>(
+    typeof override === "number" ? override : null,
+  );
+
+  useEffect(() => {
+    if (typeof override === "number") {
+      setCount(override);
+      return;
+    }
+    let cancelled = false;
+    const load = () => {
+      fetch(
+        `https://api.stellar.expert/explorer/testnet/contract/${CONFIDENTIAL_TOKEN_ID}`,
+      )
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d: { invocations?: number } | null) => {
+          if (!cancelled && typeof d?.invocations === "number") setCount(d.invocations);
+        })
+        .catch(() => undefined);
+    };
+    load();
+    const id = window.setInterval(load, 30_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [override]);
+
+  return count;
+}
 
 /**
  * Traffic light for pool solvency:
@@ -67,10 +103,12 @@ export function CoverageTrafficLight({
   ratio,
   panicHalt,
   compact,
+  txCount: txCountProp,
   className,
 }: CoverageTrafficLightProps) {
   const level = coverageLevel(ratio, panicHalt);
   const label = levelLabel(ratio, panicHalt, level);
+  const txCount = useTokenInvocations(txCountProp);
 
   const lamps = (
     <div
@@ -79,7 +117,7 @@ export function CoverageTrafficLight({
         compact ? "flex-row" : "flex-col",
       )}
       role="img"
-      aria-label={`Coverage ${label}, signal ${level}`}
+      aria-label={`Coverage ${label}, signal ${level}${txCount != null ? `, ${txCount} transactions` : ""}`}
     >
       {(
         [
@@ -101,6 +139,17 @@ export function CoverageTrafficLight({
     </div>
   );
 
+  const txLabel =
+    txCount == null ? null : (
+      <span
+        className="tabular-nums text-[var(--cream-dim)]"
+        title="On-chain confidential token invocations"
+      >
+        <span className="display text-inherit">{txCount}</span>
+        <span className="ml-1 text-[10px] uppercase tracking-wider">txs</span>
+      </span>
+    );
+
   if (compact) {
     return (
       <div className={clsx("inline-flex items-center gap-2", className)}>
@@ -115,6 +164,7 @@ export function CoverageTrafficLight({
         >
           {label}
         </span>
+        {txLabel}
       </div>
     );
   }
@@ -134,7 +184,10 @@ export function CoverageTrafficLight({
         >
           {label}
         </p>
-        <p className="mt-1 text-xs text-[var(--cream-dim)]">{levelHint(level, ratio, panicHalt)}</p>
+        <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--cream-dim)]">
+          <span>{levelHint(level, ratio, panicHalt)}</span>
+          {txLabel}
+        </p>
       </div>
     </div>
   );
