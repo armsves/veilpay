@@ -58,10 +58,14 @@ async function readNetwork(): Promise<{ network: string | null; networkPassphras
 export async function restoreWallet(): Promise<WalletState> {
   const installed = await detectFreighter();
   if (!installed) return empty(false);
-  const { address, error } = await getAddress();
-  if (error || !address) return empty(true);
-  const net = await readNetwork();
-  return { address, installed: true, ...net };
+  try {
+    const { address, error } = await getAddress();
+    if (error || !address) return empty(true);
+    const net = await readNetwork();
+    return { address, installed: true, ...net };
+  } catch {
+    return empty(true);
+  }
 }
 
 /** Connect with Freighter popup (requestAccess). */
@@ -95,6 +99,15 @@ export async function signXdr(xdr: string, address: string) {
   });
   if (result.error) throw new Error(result.error.message);
   return result.signedTxXdr;
+}
+
+export function walletStateEqual(a: WalletState, b: WalletState): boolean {
+  return (
+    a.address === b.address &&
+    a.network === b.network &&
+    a.networkPassphrase === b.networkPassphrase &&
+    a.installed === b.installed
+  );
 }
 
 export { networkMode };

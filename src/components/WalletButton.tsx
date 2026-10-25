@@ -3,7 +3,7 @@
 import { useWallet } from "./WalletProvider";
 
 export function WalletButton({ compact = false }: { compact?: boolean }) {
-  const { address, short, connecting, mismatch, installed, error, connect, disconnect } =
+  const { address, short, connecting, mismatch, installed, error, connect, disconnect, refresh } =
     useWallet();
 
   if (address) {
@@ -17,10 +17,18 @@ export function WalletButton({ compact = false }: { compact?: boolean }) {
         <button
           type="button"
           className="btn btn-ghost text-sm !py-1.5 !px-3"
-          onClick={disconnect}
-          title={address}
+          onClick={() => void refresh()}
+          title={`${address}\nClick to re-sync from Freighter`}
         >
           {short}
+        </button>
+        <button
+          type="button"
+          className="btn btn-ghost text-xs !py-1 !px-2"
+          onClick={disconnect}
+          title="Disconnect"
+        >
+          ×
         </button>
       </div>
     );
