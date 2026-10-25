@@ -40,15 +40,24 @@ export default function PayByNamePage() {
       });
       const data = await res.json();
       if (!data.ok) throw new Error(data.error);
-      setResult({
-        fqdn: data.fqdn,
-        stealthAddress: data.stealthAddress,
-        memoHint: data.memoHint,
-        viewTag: data.viewTag,
-        resolveCount: data.resolveCount,
-        announcementId: data.announcementId,
-        index: data.index,
-      });
+      const next = {
+        fqdn: data.fqdn as string,
+        stealthAddress: data.stealthAddress as string,
+        memoHint: data.memoHint as string,
+        viewTag: data.viewTag as number,
+        resolveCount: data.resolveCount as number,
+        announcementId: data.announcementId as string | undefined,
+        index: data.index as number | undefined,
+      };
+      // Guard against stale/reused addresses if an old server build replies.
+      const seenKey = `veilpay:seen:${name}`;
+      const seen = new Set<string>(JSON.parse(sessionStorage.getItem(seenKey) ?? "[]"));
+      if (seen.has(next.stealthAddress)) {
+        throw new Error("Resolved a previously used address — tap New one-time address again");
+      }
+      seen.add(next.stealthAddress);
+      sessionStorage.setItem(seenKey, JSON.stringify([...seen].slice(-40)));
+      setResult(next);
     } catch (e) {
       setResult(null);
       setError(e instanceof Error ? e.message : String(e));

@@ -43,6 +43,13 @@ export type VeilNameRecord = {
 
 const NAME_RE = /^[a-z0-9]([a-z0-9-]{1,14}[a-z0-9])?$/;
 
+/** Unique payment index — must not depend on resettable resolveCount. */
+function nextUniquePaymentIndex(): number {
+  const ms = Date.now();
+  const rand = Math.floor(Math.random() * 1024);
+  return ms * 1024 + rand;
+}
+
 export function normalizeName(input: string): string {
   return input.trim().toLowerCase().replace(/\.veil$/i, "");
 }
@@ -201,18 +208,20 @@ class VeilNameRegistry {
     const record = this.get(nameOrFqdn);
     if (!record) throw new Error(`Name not found: ${toFqdn(normalizeName(nameOrFqdn))}`);
     record.resolveCount += 1;
-    const index = record.resolveCount;
+    // Never use resolveCount as the crypto index — serverless memory resets
+    // replay 1,2,3… and regenerate the same addresses. Unique per resolve:
+    const index = nextUniquePaymentIndex();
     const viewingSecret = viewingSecretForOwner(record.owner);
     const payment = generateIndexedStealthPayment(viewingSecret, index);
     const announcement: StealthAnnouncement = {
       ...payment,
-      id: `recv_${index}_${record.createdAt}`,
+      id: `recv_${index}`,
       createdAt: Date.now(),
       swept: false,
       index,
     };
     record.inbox.unshift(announcement);
-    record.inbox = record.inbox.slice(0, 40);
+    record.inbox = record.inbox.slice(0, 80);
     this.persist();
     return { record, payment, announcement };
   }
@@ -238,18 +247,21 @@ class VeilNameRegistry {
   }
 
   /**
-   * Re-derive addresses for indices 1..upto and return keypairs that may hold funds.
-   * Works even when the in-memory inbox was wiped after a deploy.
+   * Candidates = legacy sequential indices (old bug) ∪ known inbox indices.
    */
-  listSweepCandidates(owner: string, upto = 64) {
+  listSweepCandidates(owner: string, legacyUpto = 64) {
     this.ensureHydrated();
     const record = this.getByOwner(owner);
-    const max = Math.max(upto, record?.resolveCount ?? 0, 32);
     const viewingSecret = viewingSecretForOwner(owner);
+    const indices = new Set<number>();
+    for (let i = 1; i <= legacyUpto; i++) indices.add(i);
+    for (const a of record?.inbox ?? []) {
+      if (a.index > 0) indices.add(a.index);
+    }
     const out: Array<{ index: number; address: string; secret: string }> = [];
-    for (let i = 1; i <= max; i++) {
-      const { kp } = stealthKeypairAtIndex(viewingSecret, i);
-      out.push({ index: i, address: kp.publicKey(), secret: kp.secret() });
+    for (const index of indices) {
+      const { kp } = stealthKeypairAtIndex(viewingSecret, index);
+      out.push({ index, address: kp.publicKey(), secret: kp.secret() });
     }
     return { record, candidates: out, destination: owner };
   }
