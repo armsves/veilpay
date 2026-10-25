@@ -6,6 +6,7 @@
 import {
   Asset,
   BASE_FEE,
+  Memo,
   Operation,
   TransactionBuilder,
 } from "@stellar/stellar-sdk";
@@ -41,6 +42,8 @@ export async function sendXlm(opts: {
   from: string;
   to: string;
   amount: string;
+  /** Optional classic memo (e.g. `vp:12` payment index for VNS recovery). */
+  memoText?: string;
 }): Promise<SendXlmResult> {
   const amount = formatXlmAmount(opts.amount);
   const net = currentNetwork();
@@ -72,6 +75,11 @@ export async function sendXlm(opts: {
         amount,
       }),
     );
+  }
+
+  if (opts.memoText) {
+    const text = opts.memoText.slice(0, 28);
+    builder.addMemo(Memo.text(text));
   }
 
   const tx = builder.setTimeout(180).build();

@@ -17,6 +17,7 @@ type NameRecord = {
 
 type InboxItem = {
   id: string;
+  index?: number;
   stealthAddress: string;
   memoHint: string;
   createdAt: number;
@@ -59,7 +60,7 @@ export default function StealthPage() {
     void loadMyName();
   }, [loadMyName]);
 
-  async function sweepItem(id: string) {
+  async function sweepItem(item: InboxItem) {
     if (!wallet.address) return;
     setBusy(true);
     setError(null);
@@ -71,7 +72,8 @@ export default function StealthPage() {
         body: JSON.stringify({
           action: "sweep",
           owner: wallet.address,
-          announcementId: id,
+          announcementId: item.id.startsWith("idx_") ? undefined : item.id,
+          index: item.index,
           submit: true,
         }),
       });
@@ -79,13 +81,35 @@ export default function StealthPage() {
       if (!data.ok) throw new Error(data.error);
       if (data.needsFunding) {
         setStatus(
-          `Stealth ${data.stealthAddress.slice(0, 8)}… has ${data.balanceXlm} XLM — fund it first, then sweep. Secret ready if you need Lab.`,
+          `Stealth ${data.stealthAddress.slice(0, 8)}… has ${data.balanceXlm} XLM — fund it first, then sweep.`,
         );
       } else if (data.submitted) {
         setStatus(`Swept ${data.amountXlm} XLM → Freighter · tx ${data.hash}`);
       } else {
         setStatus(data.note ?? "Sweep prepared");
       }
+      await loadMyName();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function scanSweepAll() {
+    if (!wallet.address) return;
+    setBusy(true);
+    setError(null);
+    setStatus(null);
+    try {
+      const res = await fetch("/api/names", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "scanSweep", owner: wallet.address }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error);
+      setStatus(data.note ?? `Swept ${data.totalSweptXlm ?? 0} XLM`);
       await loadMyName();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -292,10 +316,20 @@ export default function StealthPage() {
             )}
 
             <div className="border-t border-[var(--line)] pt-3">
-              <p className="text-sm text-[var(--cream-dim)]">
-                How you get the money: senders pay a burner stealth address. Only your viewing key
-                can recompute that keypair — then Sweep moves XLM to Freighter.
-              </p>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm text-[var(--cream-dim)]">
+                  Senders pay a one-time address. Sweep moves XLM to Freighter — keys re-derive from
+                  your wallet even after deploys.
+                </p>
+                <button
+                  type="button"
+                  className="btn btn-amber !py-1.5 !px-3 text-xs"
+                  disabled={busy}
+                  onClick={() => void scanSweepAll()}
+                >
+                  {busy ? "Scanning…" : "Scan & sweep all"}
+                </button>
+              </div>
               <ul className="mt-3 max-h-40 space-y-2 overflow-y-auto">
                 {inbox.length === 0 && (
                   <li className="text-xs text-[var(--cream-dim)]">
@@ -310,14 +344,16 @@ export default function StealthPage() {
                     <div className="min-w-0 break-all">
                       <p className="font-mono text-[var(--mint)]">{item.stealthAddress}</p>
                       <p className="text-[var(--cream-dim)]">
-                        {item.balanceXlm} XLM · {item.swept ? "swept" : "open"}
+                        {item.balanceXlm} XLM
+                        {item.index != null ? ` · #${item.index}` : ""} ·{" "}
+                        {item.swept ? "swept" : "open"}
                       </p>
                     </div>
                     <button
                       type="button"
                       className="btn btn-primary !py-1 !px-2.5 text-[10px]"
-                      disabled={busy || item.swept}
-                      onClick={() => void sweepItem(item.id)}
+                      disabled={busy || item.swept || item.balanceXlm <= 1}
+                      onClick={() => void sweepItem(item)}
                     >
                       Sweep
                     </button>

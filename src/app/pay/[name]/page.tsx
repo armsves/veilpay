@@ -14,6 +14,7 @@ type ResolveResult = {
   viewTag: number;
   resolveCount: number;
   announcementId?: string;
+  index?: number;
 };
 
 export default function PayByNamePage() {
@@ -46,6 +47,7 @@ export default function PayByNamePage() {
         viewTag: data.viewTag,
         resolveCount: data.resolveCount,
         announcementId: data.announcementId,
+        index: data.index,
       });
     } catch (e) {
       setResult(null);
@@ -77,6 +79,7 @@ export default function PayByNamePage() {
         from: wallet.address,
         to: result.stealthAddress,
         amount,
+        memoText: result.index != null ? `vp:${result.index}` : result.memoHint?.slice(0, 28),
       });
       setTxHash(sent.hash);
     } catch (e) {

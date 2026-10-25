@@ -84,7 +84,40 @@ export function decodeMetaAddress(encoded: string): StealthMetaAddress {
   };
 }
 
-/** Sender: create a one-time stealth Stellar address for the recipient. */
+/**
+ * Index-based one-time address (Veilpay VNS).
+ * Owner can always re-derive address #i from their viewing key — no ephemeral
+ * announcement store required (critical on serverless where memory is wiped).
+ */
+export function stealthKeypairAtIndex(viewingSecretKey: Uint8Array, index: number) {
+  if (!Number.isInteger(index) || index < 1) {
+    throw new Error("stealth index must be a positive integer");
+  }
+  const digest = sha256(
+    new Uint8Array([...viewingSecretKey, ...decodeUTF8(`veil-idx:${index}`)]),
+  );
+  const stealthSeed = sha256(new Uint8Array([...digest, ...decodeUTF8("stealth-addr")]));
+  const kp = Keypair.fromRawEd25519Seed(Buffer.from(stealthSeed));
+  return { kp, digest, viewTag: digest[0]!, index };
+}
+
+/** Sender/resolve: one-time address for payment index. */
+export function generateIndexedStealthPayment(
+  viewingSecretKey: Uint8Array,
+  index: number,
+): StealthPayment & { index: number } {
+  const { kp, digest, viewTag } = stealthKeypairAtIndex(viewingSecretKey, index);
+  return {
+    stealthAddress: kp.publicKey(),
+    /** Indexed mode: embed index so memos / clients can recover without server state. */
+    ephemeralPubKey: `idx:${index}`,
+    viewTag,
+    memoHint: `vp-i${index}-${viewTag.toString(16).padStart(2, "0")}-${toHex(digest.slice(0, 3))}`,
+    index,
+  };
+}
+
+/** @deprecated Random-ECDH path — kept for old announcement sweeps only. */
 export function generateStealthPayment(meta: StealthMetaAddress): StealthPayment {
   const ephemeral = nacl.box.keyPair();
   const viewPub = decodeBase64(meta.viewingPubKey);
@@ -102,6 +135,10 @@ export function generateStealthPayment(meta: StealthMetaAddress): StealthPayment
 }
 
 function stealthKeypairFromShared(viewingSecretKey: Uint8Array, ephemeralPubKeyB64: string) {
+  if (ephemeralPubKeyB64.startsWith("idx:")) {
+    const index = Number(ephemeralPubKeyB64.slice(4));
+    return stealthKeypairAtIndex(viewingSecretKey, index);
+  }
   const eph = decodeBase64(ephemeralPubKeyB64);
   const shared = nacl.scalarMult(viewingSecretKey, eph);
   const digest = sha256(shared);

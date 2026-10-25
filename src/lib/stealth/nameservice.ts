@@ -1,9 +1,8 @@
 /**
  * Veilpay Name Service (VNS) — Fluidkey-style human-readable stealth ids.
  *
- * Users register `name.veil`. Resolving the name always returns a fresh
- * one-time Stellar stealth address controlled by the owner's meta-keys.
- * Announcements are kept so the owner can scan + sweep to Freighter.
+ * Users register `name.veil`. Resolving returns a fresh one-time address
+ * derived from owner viewing key + payment index (always re-derivable).
  */
 
 import nacl from "tweetnacl";
@@ -12,10 +11,16 @@ import {
   deriveStealthKeysFromSeed,
   deriveStealthSweepKey,
   encodeMetaAddress,
-  generateStealthPayment,
+  generateIndexedStealthPayment,
+  stealthKeypairAtIndex,
   type StealthMetaAddress,
   type StealthPayment,
 } from "./testnet";
+import {
+  loadPersistedRegistry,
+  savePersistedRegistry,
+  type PersistedRegistry,
+} from "./vns-persist";
 
 export const VNS_TLD = "veil";
 
@@ -23,6 +28,7 @@ export type StealthAnnouncement = StealthPayment & {
   id: string;
   createdAt: number;
   swept: boolean;
+  index: number;
 };
 
 export type VeilNameRecord = {
@@ -74,28 +80,93 @@ export function viewingSecretForOwner(owner: string): Uint8Array {
 class VeilNameRegistry {
   private byName = new Map<string, VeilNameRecord>();
   private byOwner = new Map<string, string>();
+  private hydrated = false;
+
+  private ensureHydrated() {
+    if (this.hydrated) return;
+    this.hydrated = true;
+    const snap = loadPersistedRegistry();
+    if (!snap) return;
+    for (const r of snap.records) {
+      try {
+        const meta = metaForOwner(r.owner);
+        const record: VeilNameRecord = {
+          name: r.name,
+          fqdn: r.fqdn,
+          owner: r.owner,
+          meta,
+          createdAt: r.createdAt,
+          resolveCount: r.resolveCount,
+          inbox: r.inbox.map((a) => ({
+            id: a.id,
+            stealthAddress: a.stealthAddress,
+            ephemeralPubKey: a.ephemeralPubKey,
+            viewTag: a.viewTag,
+            memoHint: a.memoHint,
+            index: a.index ?? (Number(String(a.ephemeralPubKey).replace(/^idx:/, "")) || 0),
+            createdAt: a.createdAt,
+            swept: a.swept,
+          })),
+        };
+        this.byName.set(r.name, record);
+        this.byOwner.set(r.owner, r.name);
+      } catch {
+        /* skip bad row */
+      }
+    }
+  }
+
+  private persist() {
+    const snap: PersistedRegistry = {
+      version: 2,
+      records: [...this.byName.values()].map((r) => ({
+        name: r.name,
+        fqdn: r.fqdn,
+        owner: r.owner,
+        metaEncoded: r.meta.encoded,
+        createdAt: r.createdAt,
+        resolveCount: r.resolveCount,
+        inbox: r.inbox.map((a) => ({
+          id: a.id,
+          stealthAddress: a.stealthAddress,
+          ephemeralPubKey: a.ephemeralPubKey,
+          viewTag: a.viewTag,
+          memoHint: a.memoHint,
+          index: a.index,
+          createdAt: a.createdAt,
+          swept: a.swept,
+        })),
+      })),
+    };
+    savePersistedRegistry(snap);
+  }
 
   list(): VeilNameRecord[] {
+    this.ensureHydrated();
     return [...this.byName.values()].sort((a, b) => b.createdAt - a.createdAt);
   }
 
   get(nameOrFqdn: string): VeilNameRecord | null {
+    this.ensureHydrated();
     const name = normalizeName(nameOrFqdn);
     return this.byName.get(name) ?? null;
   }
 
   getByOwner(owner: string): VeilNameRecord | null {
+    this.ensureHydrated();
     const name = this.byOwner.get(owner);
     return name ? this.byName.get(name) ?? null : null;
   }
 
   available(nameOrFqdn: string): boolean {
+    this.ensureHydrated();
     const v = validateName(nameOrFqdn);
     if (!v.ok) return false;
     return !this.byName.has(v.name);
   }
 
   register(opts: { name: string; owner: string }): VeilNameRecord {
+    this.ensureHydrated();
     const v = validateName(opts.name);
     if (!v.ok) throw new Error(v.error);
     if (!opts.owner.startsWith("G") || opts.owner.length < 56) {
@@ -117,34 +188,37 @@ class VeilNameRegistry {
     };
     this.byName.set(v.name, record);
     this.byOwner.set(opts.owner, v.name);
+    this.persist();
     return record;
   }
 
   resolve(nameOrFqdn: string): {
     record: VeilNameRecord;
-    payment: StealthPayment;
+    payment: StealthPayment & { index: number };
     announcement: StealthAnnouncement;
   } {
+    this.ensureHydrated();
     const record = this.get(nameOrFqdn);
     if (!record) throw new Error(`Name not found: ${toFqdn(normalizeName(nameOrFqdn))}`);
     record.resolveCount += 1;
-    const payment = generateStealthPayment(record.meta);
+    const index = record.resolveCount;
+    const viewingSecret = viewingSecretForOwner(record.owner);
+    const payment = generateIndexedStealthPayment(viewingSecret, index);
     const announcement: StealthAnnouncement = {
       ...payment,
-      id: `recv_${Date.now()}_${record.resolveCount}`,
+      id: `recv_${index}_${record.createdAt}`,
       createdAt: Date.now(),
       swept: false,
+      index,
     };
     record.inbox.unshift(announcement);
     record.inbox = record.inbox.slice(0, 40);
+    this.persist();
     return { record, payment, announcement };
   }
 
-  /**
-   * Owner-only: recompute stealth secret from announcement + viewing key,
-   * so funds can be swept to Freighter.
-   */
   prepareSweep(opts: { owner: string; announcementId: string }) {
+    this.ensureHydrated();
     const record = this.getByOwner(opts.owner);
     if (!record) throw new Error("No .veil name for this wallet");
     const item = record.inbox.find((a) => a.id === opts.announcementId);
@@ -158,14 +232,46 @@ class VeilNameRegistry {
       stealthAddress: sweep.address,
       stealthSecret: sweep.secret,
       destination: record.owner,
-      note: "Import stealthSecret into Freighter (or Lab) and pay remaining balance to your main G… — or use POST sweep to build a payment XDR.",
+      index: item.index,
+      note: "Sweep moves spendable XLM from the one-time address to your Freighter.",
     };
   }
 
+  /**
+   * Re-derive addresses for indices 1..upto and return keypairs that may hold funds.
+   * Works even when the in-memory inbox was wiped after a deploy.
+   */
+  listSweepCandidates(owner: string, upto = 64) {
+    this.ensureHydrated();
+    const record = this.getByOwner(owner);
+    const max = Math.max(upto, record?.resolveCount ?? 0, 32);
+    const viewingSecret = viewingSecretForOwner(owner);
+    const out: Array<{ index: number; address: string; secret: string }> = [];
+    for (let i = 1; i <= max; i++) {
+      const { kp } = stealthKeypairAtIndex(viewingSecret, i);
+      out.push({ index: i, address: kp.publicKey(), secret: kp.secret() });
+    }
+    return { record, candidates: out, destination: owner };
+  }
+
   markSwept(owner: string, announcementId: string) {
+    this.ensureHydrated();
     const record = this.getByOwner(owner);
     const item = record?.inbox.find((a) => a.id === announcementId);
-    if (item) item.swept = true;
+    if (item) {
+      item.swept = true;
+      this.persist();
+    }
+  }
+
+  markIndexSwept(owner: string, index: number) {
+    this.ensureHydrated();
+    const record = this.getByOwner(owner);
+    const item = record?.inbox.find((a) => a.index === index);
+    if (item) {
+      item.swept = true;
+      this.persist();
+    }
   }
 }
 

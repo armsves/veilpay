@@ -1,19 +1,12 @@
 import { NextResponse } from "next/server";
 import {
-  Asset,
-  BASE_FEE,
-  Keypair,
-  Operation,
-  TransactionBuilder,
-} from "@stellar/stellar-sdk";
-import {
   getVeilNameRegistry,
   normalizeName,
   toFqdn,
   validateName,
 } from "@/lib/stealth/nameservice";
-import { currentNetwork } from "@/lib/stellar/config";
-import { createRpcServer, fetchXlmBalance, submitAndConfirm } from "@/lib/stellar/rpc";
+import { fetchXlmBalance } from "@/lib/stellar/rpc";
+import { sweepStealthToOwner } from "@/lib/stellar/sweep-account";
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
@@ -41,24 +34,36 @@ export async function GET(req: Request) {
 
   if (action === "inbox" && owner) {
     const record = registry.getByOwner(owner);
-    if (!record) return NextResponse.json({ ok: true, record: null, inbox: [] });
-    const inbox = await Promise.all(
-      record.inbox.map(async (a) => ({
-        id: a.id,
-        stealthAddress: a.stealthAddress,
-        memoHint: a.memoHint,
-        viewTag: a.viewTag,
-        createdAt: a.createdAt,
-        swept: a.swept,
-        balanceXlm: await fetchXlmBalance(a.stealthAddress),
-      })),
+    const { candidates } = registry.listSweepCandidates(owner, 48);
+
+    // Always re-derive recent indices so a wiped serverless inbox still shows funded burners.
+    const scanned = await Promise.all(
+      candidates.map(async (c) => {
+        const balanceXlm = await fetchXlmBalance(c.address);
+        const known = record?.inbox.find((a) => a.index === c.index || a.stealthAddress === c.address);
+        return {
+          id: known?.id ?? `idx_${c.index}`,
+          index: c.index,
+          stealthAddress: c.address,
+          memoHint: known?.memoHint ?? `vp-i${c.index}`,
+          viewTag: known?.viewTag ?? 0,
+          createdAt: known?.createdAt ?? 0,
+          swept: known?.swept ?? false,
+          balanceXlm,
+        };
+      }),
     );
+
+    const fundedOrKnown = scanned.filter(
+      (a) => a.balanceXlm > 0 || (record?.inbox.some((i) => i.index === a.index) ?? false),
+    );
+
     return NextResponse.json({
       ok: true,
-      record: publicRecord(record, true),
-      inbox,
+      record: record ? publicRecord(record, true) : null,
+      inbox: fundedOrKnown.length > 0 ? fundedOrKnown : scanned.slice(0, 5),
       howToSweep:
-        "Each pay-page resolve creates a one-time address. Only you (name owner) can recompute its secret from the viewing key and move XLM to Freighter.",
+        "Addresses are derived from your wallet + payment index. Scan & sweep recomputes keys even after deploys wipe server memory.",
     });
   }
 
@@ -94,6 +99,7 @@ export async function POST(req: Request) {
     name?: string;
     owner?: string;
     announcementId?: string;
+    index?: number;
     submit?: boolean;
   };
   const registry = getVeilNameRegistry();
@@ -117,6 +123,7 @@ export async function POST(req: Request) {
           fqdn: record.fqdn,
           resolveCount: record.resolveCount,
           announcementId: announcement.id,
+          index: payment.index,
           stealthAddress: payment.stealthAddress,
           ephemeralPubKey: payment.ephemeralPubKey,
           viewTag: payment.viewTag,
@@ -124,82 +131,111 @@ export async function POST(req: Request) {
         });
       }
       case "sweep": {
-        if (!body.owner || !body.announcementId) {
+        if (!body.owner || (!body.announcementId && body.index == null)) {
           return NextResponse.json(
-            { ok: false, error: "owner and announcementId required" },
+            { ok: false, error: "owner and announcementId (or index) required" },
             { status: 400 },
           );
         }
-        const prepared = registry.prepareSweep({
-          owner: body.owner,
-          announcementId: body.announcementId,
+
+        let stealthSecret: string;
+        let stealthAddress: string;
+        let destination: string;
+        let announcementId = body.announcementId;
+        let index = body.index;
+
+        if (body.announcementId) {
+          const prepared = registry.prepareSweep({
+            owner: body.owner,
+            announcementId: body.announcementId,
+          });
+          stealthSecret = prepared.stealthSecret;
+          stealthAddress = prepared.stealthAddress;
+          destination = prepared.destination;
+          index = prepared.index;
+        } else {
+          const { candidates } = registry.listSweepCandidates(body.owner, index ?? 64);
+          const hit = candidates.find((c) => c.index === index);
+          if (!hit) throw new Error("Index out of range");
+          stealthSecret = hit.secret;
+          stealthAddress = hit.address;
+          destination = body.owner;
+        }
+
+        const result = await sweepStealthToOwner({
+          stealthSecret,
+          stealthAddress,
+          destination,
+          submit: Boolean(body.submit),
         });
 
-        const balance = await fetchXlmBalance(prepared.stealthAddress);
-        if (balance <= 1.00001) {
+        if ("needsFunding" in result && result.needsFunding) {
           return NextResponse.json({
-            ok: true,
-            needsFunding: true,
-            stealthAddress: prepared.stealthAddress,
-            balanceXlm: balance,
-            stealthSecret: prepared.stealthSecret,
-            destination: prepared.destination,
-            note: "No spendable XLM yet (account missing or only base reserve). After someone pays this address, Sweep again — or import stealthSecret in Lab to move funds manually.",
+            ...result,
+            note: "No spendable XLM yet (account missing or only base reserve).",
           });
         }
 
-        const net = currentNetwork();
-        const server = createRpcServer();
-        const source = await server.getAccount(prepared.stealthAddress);
-        // Leave ~1.5 XLM for base reserve + fee headroom on the burner; send rest to Freighter.
-        const keep = 1.5;
-        const sendAmount = Math.max(0, Math.floor((balance - keep) * 1e7) / 1e7);
-        if (sendAmount <= 0) {
-          return NextResponse.json({
-            ok: false,
-            error: `Balance ${balance} XLM too low to sweep after reserves`,
-            stealthSecret: prepared.stealthSecret,
-          });
+        if (result.submitted) {
+          if (announcementId) registry.markSwept(body.owner, announcementId);
+          if (index != null) registry.markIndexSwept(body.owner, index);
         }
 
-        const kp = Keypair.fromSecret(prepared.stealthSecret);
-        const tx = new TransactionBuilder(source, {
-          fee: BASE_FEE,
-          networkPassphrase: net.networkPassphrase,
-        })
-          .addOperation(
-            Operation.payment({
-              destination: prepared.destination,
-              asset: Asset.native(),
-              amount: sendAmount.toFixed(7),
-            }),
-          )
-          .setTimeout(180)
-          .build();
-        tx.sign(kp);
+        return NextResponse.json(result);
+      }
+      case "scanSweep": {
+        if (!body.owner) {
+          return NextResponse.json({ ok: false, error: "owner required" }, { status: 400 });
+        }
+        const { candidates } = registry.listSweepCandidates(body.owner, 64);
+        const swept: Array<{ index: number; address: string; amountXlm: number; hash: string }> = [];
+        const skipped: Array<{ index: number; address: string; balanceXlm: number }> = [];
 
-        if (body.submit) {
-          const { hash } = await submitAndConfirm(tx);
-          registry.markSwept(body.owner, body.announcementId);
-          return NextResponse.json({
-            ok: true,
-            submitted: true,
-            amountXlm: sendAmount,
-            from: prepared.stealthAddress,
-            to: prepared.destination,
-            hash,
-          });
+        for (const c of candidates) {
+          const balanceXlm = await fetchXlmBalance(c.address);
+          if (balanceXlm <= 1.00001) {
+            if (balanceXlm > 0) skipped.push({ index: c.index, address: c.address, balanceXlm });
+            continue;
+          }
+          try {
+            const result = await sweepStealthToOwner({
+              stealthSecret: c.secret,
+              stealthAddress: c.address,
+              destination: body.owner,
+              submit: true,
+            });
+            if ("needsFunding" in result && result.needsFunding) {
+              skipped.push({ index: c.index, address: c.address, balanceXlm });
+              continue;
+            }
+            if (result.submitted && result.hash) {
+              swept.push({
+                index: c.index,
+                address: c.address,
+                amountXlm: result.amountXlm,
+                hash: result.hash,
+              });
+              registry.markIndexSwept(body.owner, c.index);
+            }
+          } catch (e) {
+            skipped.push({
+              index: c.index,
+              address: c.address,
+              balanceXlm,
+            });
+            void e;
+          }
         }
 
         return NextResponse.json({
           ok: true,
-          submitted: false,
-          amountXlm: sendAmount,
-          from: prepared.stealthAddress,
-          to: prepared.destination,
-          xdr: tx.toXDR(),
-          stealthSecret: prepared.stealthSecret,
-          note: "Pass submit:true to broadcast, or sign/submit the XDR yourself.",
+          swept,
+          skipped,
+          totalSweptXlm: swept.reduce((s, x) => s + x.amountXlm, 0),
+          note:
+            swept.length === 0
+              ? "No indexed stealth addresses with spendable balance. Pre-fix random-ECDH deposits cannot be recovered without their ephemeral key."
+              : `Swept ${swept.length} address(es) to Freighter.`,
         });
       }
       default:
@@ -228,6 +264,7 @@ function publicRecord(
       ? {
           inbox: r.inbox.map((a) => ({
             id: a.id,
+            index: a.index,
             stealthAddress: a.stealthAddress,
             memoHint: a.memoHint,
             createdAt: a.createdAt,
@@ -237,4 +274,3 @@ function publicRecord(
       : {}),
   };
 }
-
