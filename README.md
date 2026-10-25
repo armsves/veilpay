@@ -1,36 +1,51 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Veilpay
 
-## Getting Started
+Private payroll banking app on Stellar — stealth addresses, confidential amounts, solvency-guarded pools, and Pollar Sandbox cross-border ramps.
 
-First, run the development server:
+## Modules (separate)
+
+| Module | Path | Network |
+|--------|------|---------|
+| Stealth testnet | `src/lib/stealth/testnet.ts` | Stellar testnet (DKSAP-style + [privacy docs](https://developers.stellar.org/docs/build/apps/privacy) / SPP) |
+| Stealth mainnet + Intents | `src/lib/stealth/mainnet-intents.ts` | Mainnet path via NEAR Confidential Intents |
+| Confidential payroll + solvency | `src/lib/confidential/*` | Testnet — B≥L gate, monitor halt, panic lock |
+| Pollar Sandbox ramps | `src/lib/pollar/client.ts` | TestNet SEP-24 ARS/PEN — **no mock bank** |
+
+## Quick start
 
 ```bash
+cp .env.example .env.local
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000). Connect with **Freighter** (Testnet).
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Optional env:
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+- `NEXT_PUBLIC_POLLAR_KEY` — Pollar publishable key (TestNet app with **Pollar Sandbox** enabled)
+- `NEAR_INTENTS_JWT` — live Confidential Intents quotes (mainnet module)
 
-## Learn More
+## Wallet
 
-To learn more about Next.js, take a look at the following resources:
+Freighter via `@stellar/freighter-api`: connect in the header, restore session, network mismatch warning (expects Testnet), and `signXdr` helper for future Soroban txs.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## App routes
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- `/` — brand landing
+- `/app` — banking overview
+- `/app/stealth` — testnet meta-address + mainnet Intents quote
+- `/app/payroll` — fund / pay / drain simulation / panic / unwrap→Pollar
+- `/app/cross-border` — Pollar Sandbox corridors
 
-## Deploy on Vercel
+## Solvency model
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+1. **Gate** — deposit/withdraw revert if coverage would fall below 1 (or pool already insolvent / halted)
+2. **Monitor** — `halt_if_insolvent` after external asset delta
+3. **Panic** — freezes all pool ops until top-up + unpause
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Stack notes
+
+- Confidential on-chain: OpenZeppelin `stellar-confidential` v0.8.0 (wire SDK when deploying circuits)
+- Privacy pools: Nethermind SPP on testnet
+- Fiat: Pollar Sandbox on Stellar TestNet (ARS/PEN), not a mock bank
