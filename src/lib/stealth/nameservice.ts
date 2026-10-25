@@ -21,7 +21,12 @@ import {
   savePersistedRegistry,
   type PersistedRegistry,
 } from "./vns-persist";
-import { chainGetOwner, chainListNames, chainPutName } from "./vns-chain";
+import {
+  chainGetNameByOwner,
+  chainGetOwner,
+  chainListNames,
+  chainPutName,
+} from "./vns-chain";
 
 export const VNS_TLD = "veil";
 
@@ -219,6 +224,20 @@ class VeilNameRegistry {
     return name ? this.byName.get(name) ?? null : null;
   }
 
+  /** Async owner lookup — falls back to on-chain reverse index after cold starts. */
+  async getByOwnerAsync(owner: string): Promise<VeilNameRecord | null> {
+    this.ensureHydrated();
+    const hit = this.getByOwner(owner);
+    if (hit) return hit;
+    const name = await chainGetNameByOwner(owner);
+    if (!name) return null;
+    const onChainOwner = await chainGetOwner(name);
+    if (onChainOwner && onChainOwner !== owner) return null;
+    this.ingestRecord({ name, owner: onChainOwner ?? owner });
+    this.persist();
+    return this.byName.get(name) ?? null;
+  }
+
   available(nameOrFqdn: string): boolean {
     this.ensureHydrated();
     const v = validateName(nameOrFqdn);
@@ -248,7 +267,11 @@ class VeilNameRegistry {
     if (byName) {
       if (byName.owner === opts.owner) {
         // Ensure on-chain copy exists even if RAM was restored from local only
-        void chainPutName(v.name, opts.owner);
+        const put = await chainPutName(v.name, opts.owner);
+        if (put.error && !put.skipped) {
+          (byName as VeilNameRecord & { chainPersistError?: string }).chainPersistError =
+            put.error;
+        }
         return byName;
       }
       throw new Error(`${toFqdn(v.name)} is already taken`);
@@ -260,16 +283,21 @@ class VeilNameRegistry {
     if (chainOwner === opts.owner) {
       this.ingestRecord({ name: v.name, owner: opts.owner });
       this.persist();
+      // Backfill reverse index if older writes only stored v:<name>
+      await chainPutName(v.name, opts.owner);
       return this.byName.get(v.name)!;
     }
 
-    const existingName = this.byOwner.get(opts.owner);
+    const existingName =
+      this.byOwner.get(opts.owner) ?? (await chainGetNameByOwner(opts.owner));
     if (existingName) {
-      const existing = this.byName.get(existingName);
-      if (existing) {
-        if (existingName === v.name) return existing;
-        throw new Error(`Wallet already registered as ${toFqdn(existingName)}`);
+      if (existingName === v.name) {
+        this.ingestRecord({ name: v.name, owner: opts.owner });
+        this.persist();
+        await chainPutName(v.name, opts.owner);
+        return this.byName.get(v.name)!;
       }
+      throw new Error(`Wallet already registered as ${toFqdn(existingName)}`);
     }
 
     const meta = metaForOwner(opts.owner);
@@ -288,8 +316,16 @@ class VeilNameRegistry {
 
     const chain = await chainPutName(v.name, opts.owner);
     if (chain.error && !chain.skipped) {
-      // Keep RAM/tmp record; surface warning via thrown only if claim conflict
-      if (chain.error.includes("already claimed")) throw new Error(chain.error);
+      if (
+        chain.error.includes("already claimed") ||
+        chain.error.includes("already registered on-chain")
+      ) {
+        throw new Error(chain.error);
+      }
+      // Durable persist failed (missing secret, RPC, etc.) — still return RAM
+      // record but attach warning so clients/logs can see why Vercel wipes lose it.
+      (record as VeilNameRecord & { chainPersistError?: string }).chainPersistError =
+        chain.error;
     }
     return record;
   }

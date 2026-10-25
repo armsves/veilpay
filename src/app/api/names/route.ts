@@ -34,7 +34,7 @@ export async function GET(req: Request) {
   }
 
   if (action === "inbox" && owner) {
-    const record = registry.getByOwner(owner);
+    const record = await registry.getByOwnerAsync(owner);
     const { candidates } = registry.listSweepCandidates(owner, 48);
 
     // Always re-derive recent indices so a wiped serverless inbox still shows funded burners.
@@ -69,7 +69,7 @@ export async function GET(req: Request) {
   }
 
   if (owner) {
-    const record = registry.getByOwner(owner);
+    const record = await registry.getByOwnerAsync(owner);
     return NextResponse.json({
       ok: true,
       record: record ? publicRecord(record, true) : null,
@@ -112,7 +112,12 @@ export async function POST(req: Request) {
           return NextResponse.json({ ok: false, error: "name and owner required" }, { status: 400 });
         }
         const record = await registry.register({ name: body.name, owner: body.owner });
-        return NextResponse.json({ ok: true, record: publicRecord(record, true) });
+        const chainWarn = (record as { chainPersistError?: string }).chainPersistError;
+        return NextResponse.json({
+          ok: true,
+          record: publicRecord(record, true),
+          ...(chainWarn ? { warning: `On-chain persist failed: ${chainWarn}` } : {}),
+        });
       }
       case "resolve": {
         if (!body.name) {
