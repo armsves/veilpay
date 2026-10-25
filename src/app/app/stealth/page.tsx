@@ -351,9 +351,8 @@ export default function StealthPage() {
         <p className="pill mb-3">Veilpay Name Service</p>
         <h1 className="display text-4xl tracking-tight">Stealth names</h1>
         <p className="mt-3 max-w-2xl text-[var(--cream-dim)]">
-          Like Fluidkey&apos;s <code className="text-[var(--mint)]">*.fkey.eth</code> — register{" "}
-          <code className="text-[var(--mint)]">you.veil</code>. Every resolve returns a fresh stealth
-          address; your Freighter key stays private.
+          Register <code className="text-[var(--mint)]">you.veil</code>. Every resolve returns a
+          fresh stealth address; your Freighter key stays private.
         </p>
       </div>
 
