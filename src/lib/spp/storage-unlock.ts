@@ -55,9 +55,10 @@ function decodeSignature(signedMessage: string): Uint8Array {
   throw new Error("Unexpected Freighter signature encoding for storage unlock");
 }
 
+/** Freighter signMessage is SEP-53 — must use verifyMessage, not raw verify. */
 function verifyWalletSig(address: string, message: string, sig: Uint8Array): boolean {
   try {
-    return Keypair.fromPublicKey(address).verify(Buffer.from(message, "utf8"), Buffer.from(sig));
+    return Keypair.fromPublicKey(address).verifyMessage(message, Buffer.from(sig));
   } catch {
     return false;
   }
