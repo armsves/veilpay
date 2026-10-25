@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { usePollar } from "@pollar/react";
 import { toast } from "react-toastify";
 import Link from "next/link";
-import { hasPollarKey } from "@/lib/pollar/client";
+import { hasPollarKey, POLLAR_SANDBOX_ARS } from "@/lib/pollar/client";
 import { useWallet } from "@/components/WalletProvider";
 import {
   formatXlm,
@@ -103,6 +103,8 @@ function PollarCashOutInner({
     openRampModal,
     openReceiveModal,
     openWalletBalanceModal,
+    openEnabledAssetsModal,
+    setTrustline,
     logout,
     verified,
     refreshWalletBalance,
@@ -112,6 +114,7 @@ function PollarCashOutInner({
   const [confSnap, setConfSnap] = useState<ConfidentialBalanceSnap | null>(null);
   const [confBusy, setConfBusy] = useState(false);
   const [confErr, setConfErr] = useState<string | null>(null);
+  const [trustBusy, setTrustBusy] = useState(false);
   const peekedFor = useRef<string | null>(null);
 
   const address = addressOf(wallet) ?? wallets.map((w) => addressOf(w)).find(Boolean) ?? null;
@@ -182,6 +185,30 @@ function PollarCashOutInner({
     });
   };
 
+  const ensureArsTrustline = async () => {
+    if (!isAuthenticated) {
+      openLoginModal();
+      toast.info("Sign in to Pollar first");
+      return;
+    }
+    setTrustBusy(true);
+    try {
+      await setTrustline({
+        code: POLLAR_SANDBOX_ARS.code,
+        issuer: POLLAR_SANDBOX_ARS.issuer,
+      });
+      await refreshWalletBalance();
+      toast.success("ARS trustline ready — try Get test ARS again");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      toast.error(msg);
+      // Dashboard may need ARS enabled under Tokens & Trustlines for sponsorship.
+      openEnabledAssetsModal();
+    } finally {
+      setTrustBusy(false);
+    }
+  };
+
   const openRamp = (kind: "buy" | "sell") => {
     if (!isAuthenticated) {
       openLoginModal();
@@ -202,7 +229,7 @@ function PollarCashOutInner({
     openRampModal();
     toast.info(
       kind === "buy"
-        ? "Pick Buy · AR · ARS to mint sandbox pesos into your Pollar wallet"
+        ? "Need ARS trustline first if deposit failed — then Buy · AR · ARS"
         : "Pick Sell · AR · ARS to cash out to the sandbox bank",
     );
   };
@@ -389,7 +416,7 @@ function PollarCashOutInner({
             </div>
           </div>
           <p className="text-xs leading-snug text-[var(--cream-dim)]">
-            Get sandbox ARS via Buy, then Sell to bank. Available shows in the ramp.
+            Enable ARS trustline, Buy sandbox ARS, then Sell to bank.
           </p>
           <div className="flex flex-wrap gap-1.5">
             <button
@@ -398,6 +425,14 @@ function PollarCashOutInner({
               onClick={() => onRefreshRoutes()}
             >
               Refresh
+            </button>
+            <button
+              type="button"
+              className="btn btn-amber !px-2 !py-1.5 text-xs"
+              disabled={trustBusy}
+              onClick={() => void ensureArsTrustline()}
+            >
+              {trustBusy ? "Adding…" : "Add ARS line"}
             </button>
             <button
               type="button"

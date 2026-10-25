@@ -8,6 +8,12 @@
  * The list below is the operator checklist for typical LATAM sandbox corridors.
  */
 
+/** Pollar Sandbox ARS on Stellar testnet (issuer from live ramp routes). */
+export const POLLAR_SANDBOX_ARS = {
+  code: "ARS",
+  issuer: "GCLAJ3NUQJPUIXMOP6EEQOOK556X6JUBSQEDGIYN2QD4MBEF3EVKCMDR",
+} as const;
+
 export type RampDirection = "onramp" | "offramp";
 
 export type PollarSandboxCorridor = {
