@@ -252,8 +252,12 @@ export default function PayrollPage() {
     void connectSpp({ silent: true });
   }, [wallet.address, connectSpp]);
 
-  async function act(action: string, extra: Record<string, unknown> = {}) {
-    setStatus(null);
+  async function act(
+    action: string,
+    extra: Record<string, unknown> = {},
+    opts?: { quiet?: boolean },
+  ) {
+    if (!opts?.quiet) setStatus(null);
     const res = await fetch("/api/payroll", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -261,7 +265,7 @@ export default function PayrollPage() {
     });
     const data = await res.json();
     if (!data.ok) {
-      notify(false, `${data.code ?? "ERROR"}: ${data.error}`);
+      if (!opts?.quiet) notify(false, `${data.code ?? "ERROR"}: ${data.error}`);
       if (data.solvency) setSolvency(data.solvency);
       return data;
     }
@@ -371,7 +375,7 @@ export default function PayrollPage() {
 
   async function mintFreshStealth(emp: Employee): Promise<Employee> {
     if (!emp.veilName) return emp;
-    const data = await act("fresh_stealth", { employeeId: emp.id });
+    const data = await act("fresh_stealth", { employeeId: emp.id }, { quiet: true });
     if (data?.ok && data.employee) {
       const next: Employee = {
         ...emp,
@@ -385,6 +389,27 @@ export default function PayrollPage() {
       return next;
     }
     return emp;
+  }
+
+  /** After a spend, wait until local notes re-derive so the next transfer finds unspent notes. */
+  async function settleAfterSppSpend(before: bigint, spent: bigint) {
+    if (!spp) return;
+    const target = before > spent ? before - spent : 0n;
+    for (let round = 1; round <= 12; round++) {
+      try {
+        await spp.client.sync();
+        const b = await spp.pool.balance();
+        if (b <= target) {
+          push(`Notes settled · shielded ${stroopsToXlm(b)} XLM`);
+          return;
+        }
+      } catch {
+        /* keep polling */
+      }
+      push(`Waiting for note derivation (${round}/12)…`);
+      await new Promise((r) => setTimeout(r, 900));
+    }
+    push("Note settlement timed out — next pay may need Refresh");
   }
 
   async function paySelectedViaSpp() {
@@ -411,10 +436,16 @@ export default function PayrollPage() {
           `${label} is not SPP-registered — that wallet must open Private pay → Connect SPP once`,
         );
       }
+      const before = await spp.pool.balance();
+      if (before < stroops) {
+        throw new Error(`Insufficient SPP balance (have ${stroopsToXlm(before)} XLM)`);
+      }
       push(`Private SPP pay ${payAmount} XLM → ${label}`);
       await spp.pool.transferToKeys(lookup.entry.noteKey, lookup.entry.encryptionKey, stroops);
-      await act("mark_spp_paid", { employeeId: emp.id, xlmAmount: payAmount });
-      await act("pay", { employeeId: emp.id, amount: payAmount });
+      await settleAfterSppSpend(before, stroops);
+      await act("mark_spp_paid", { employeeId: emp.id, xlmAmount: payAmount }, { quiet: true });
+      // Demo confidential ledger — best-effort; SPP transfer is the source of truth.
+      await act("pay", { employeeId: emp.id, amount: payAmount }, { quiet: true });
       await refreshSpp();
       push("SPP private transfer confirmed (amount hidden on-chain)");
       notify(true, `Paid ${payAmount} XLM privately to ${label}`);
@@ -441,43 +472,59 @@ export default function PayrollPage() {
     setStatus(null);
     let okCount = 0;
     const skipped: string[] = [];
+    const failed: string[] = [];
     const next = [...employees];
     try {
       await spp.client.sync();
       for (const emp0 of employees) {
         const label = emp0.veilName ? `${emp0.veilName}.veil` : emp0.name;
         push(`Payroll → ${label}…`);
-        const emp = await mintFreshStealth(emp0);
-        const lookup = await spp.client.recipientLookup(sppLookupAddress(emp));
-        if (!lookup?.entry) {
-          push(`Skip ${label}: not SPP-registered`);
-          skipped.push(label);
+        try {
+          const emp = await mintFreshStealth(emp0);
+          const lookup = await spp.client.recipientLookup(sppLookupAddress(emp));
+          if (!lookup?.entry) {
+            push(`Skip ${label}: not SPP-registered`);
+            skipped.push(label);
+            const i = next.findIndex((e) => e.id === emp.id);
+            if (i >= 0) next[i] = { ...next[i], ...emp, sppRegistered: false };
+            continue;
+          }
+          const stroops = xlmToStroops(payAmount);
+          const before = await spp.pool.balance();
+          if (before < stroops) {
+            throw new Error(`Insufficient SPP balance (have ${stroopsToXlm(before)} XLM)`);
+          }
+          await spp.pool.transferToKeys(lookup.entry.noteKey, lookup.entry.encryptionKey, stroops);
+          await settleAfterSppSpend(before, stroops);
+          await act("mark_spp_paid", { employeeId: emp.id, xlmAmount: payAmount }, { quiet: true });
+          await act("pay", { employeeId: emp.id, amount: payAmount }, { quiet: true });
           const i = next.findIndex((e) => e.id === emp.id);
-          if (i >= 0) next[i] = { ...next[i], ...emp, sppRegistered: false };
-          continue;
+          if (i >= 0) {
+            next[i] = { ...next[i], ...emp, lastSppPayXlm: payAmount, sppRegistered: true };
+          }
+          okCount += 1;
+          push(`Paid ${payAmount} XLM → ${label}`);
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          push(`Fail ${label}: ${msg}`);
+          failed.push(`${label} (${msg.slice(0, 60)})`);
         }
-        const stroops = xlmToStroops(payAmount);
-        await spp.pool.transferToKeys(lookup.entry.noteKey, lookup.entry.encryptionKey, stroops);
-        await act("mark_spp_paid", { employeeId: emp.id, xlmAmount: payAmount });
-        await act("pay", { employeeId: emp.id, amount: payAmount });
-        const i = next.findIndex((e) => e.id === emp.id);
-        if (i >= 0) {
-          next[i] = { ...next[i], ...emp, lastSppPayXlm: payAmount, sppRegistered: true };
-        }
-        okCount += 1;
-        push(`Paid ${payAmount} XLM → ${label}`);
       }
       persistRoster(next);
       await refreshSpp();
       if (okCount === 0) {
         notify(
           false,
-          `0/${employees.length} paid — ${skipped.join(", ")} must open Private pay → Connect SPP once`,
+          failed.length
+            ? `0/${employees.length} paid — ${failed.join("; ")}`
+            : `0/${employees.length} paid — ${skipped.join(", ") || "none"} need SPP registration`,
         );
-      } else if (skipped.length > 0) {
+      } else if (failed.length > 0 || skipped.length > 0) {
         notify(
           true,
-          `Paid ${okCount}/${employees.length}; skipped ${skipped.join(", ")} (not SPP-registered)`,
+          `SPP payroll ${okCount}/${employees.length} paid` +
+            (failed.length ? `; failed: ${failed.join("; ")}` : "") +
+            (skipped.length ? `; skipped: ${skipped.join(", ")}` : ""),
         );
       } else {
         notify(true, `SPP payroll finished: ${okCount}/${employees.length} paid ${payAmount} XLM each`);
