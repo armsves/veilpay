@@ -278,35 +278,38 @@ export default function PrivatePayPage() {
       {keyMismatch && (
         <div className="panel space-y-3 border-[rgba(232,180,92,0.45)] p-4 text-sm">
           <p className="text-[var(--amber)]">
-            On-chain SPP registry keys ≠ this browser’s wallet. The ~3.5 XLM shield used{" "}
-            <code>transfer(G…)</code> so notes decrypt only with the registry’s private keys (often
-            first created in the Nethermind demo OPFS).
+            Registry keys ≠ this wallet, and the Nethermind demo also shows <strong>0</strong> on
+            pool CAALK4… — the ~3.5 XLM notes are encrypted to privacy keys that no longer exist in
+            either browser OPFS (likely wiped after the first registration). They can’t be decrypted
+            from Freighter alone.
           </p>
           <div className="flex flex-wrap gap-2">
-            <a
-              className="btn btn-primary !py-2 !px-4 text-sm"
-              href={sppDocs.demo}
-              target="_blank"
-              rel="noreferrer"
-            >
-              1. Nethermind demo → Withdraw (best for the 3.5 XLM)
-            </a>
             <button
               type="button"
-              className="btn btn-amber !py-2 !px-4 text-sm"
+              className="btn btn-primary !py-2 !px-4 text-sm"
+              disabled={busy || !session}
+              onClick={() => {
+                setAmount("2");
+                void runDeposit();
+              }}
+            >
+              Deposit fresh XLM under these keys
+            </button>
+            <Link className="btn btn-ghost !py-2 !px-4 text-sm" href="/app/stealth">
+              Stealth → Reclaim (only if burner still holds notes)
+            </Link>
+            <button
+              type="button"
+              className="btn btn-ghost !py-2 !px-4 text-sm"
               disabled={busy || !wallet.address}
               onClick={() => void resetSppWallet()}
             >
-              {busy ? "Resetting…" : "2. Reset Veilpay OPFS & re-derive"}
+              Reset OPFS
             </button>
-            <Link className="btn btn-ghost !py-2 !px-4 text-sm" href="/app/stealth">
-              3. Stealth → Reclaim
-            </Link>
           </div>
           <p className="text-xs text-[var(--cream-dim)]">
-            Demo: same Freighter, do <strong>not</strong> clear that site’s data. Reset: close other
-            Veilpay tabs; after reload Freighter must prompt for key derivation. New Shields use
-            local keys so this mismatch won’t strand future deposits.
+            Testnet loss on the old note is expected after key wipe. New Shields/Deposits use{" "}
+            <code>transferToKeys</code> / local derive so balances stay visible here.
           </p>
         </div>
       )}
