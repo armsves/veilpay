@@ -141,7 +141,7 @@ export async function POST(req: Request) {
         let stealthSecret: string;
         let stealthAddress: string;
         let destination: string;
-        let announcementId = body.announcementId;
+        const announcementId = body.announcementId;
         let index = body.index;
 
         if (body.announcementId) {
