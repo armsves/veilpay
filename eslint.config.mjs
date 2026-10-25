@@ -18,6 +18,8 @@ const eslintConfig = [
       "out/**",
       "build/**",
       "next-env.d.ts",
+      // Generated Soroban client (declaration merging + unused XDR types)
+      "src/lib/confidential/token-bindings.ts",
     ],
   },
 ];

@@ -5,8 +5,13 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: path.join(__dirname),
   },
-  // SPP is client-only (dynamic import); keep it external to the server graph.
-  serverExternalPackages: ["stellar-private-payments"],
+  // SPP / OZ confidential SDK are client-only; keep out of the server graph.
+  serverExternalPackages: [
+    "stellar-private-payments",
+    "stellar-confidential-token-sdk",
+    "@aztec/bb.js",
+    "@noir-lang/noir_js",
+  ],
 };
 
 export default nextConfig;
