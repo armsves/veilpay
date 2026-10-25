@@ -8,7 +8,6 @@ import {
   consumeSppAfterWipeFlag,
   createSppClient,
   isSppLockError,
-  signalOtherTabsToReleaseSpp,
   softReleaseSppRuntime,
   sppKeysMatch,
   stroopsToXlm,
@@ -93,7 +92,6 @@ export default function PrivatePayPage() {
           : "Booting SPP (WASM + circuits from CDN)…",
       );
       try {
-        signalOtherTabsToReleaseSpp();
         const s = await createSppClient({ userAddress: address });
         setSession(s);
         push(`Connected as ${address.slice(0, 6)}… · pool ${s.poolContract.slice(0, 8)}…`);

@@ -39,6 +39,11 @@ let sharedBoot: Promise<SharedRuntime> | null = null;
 let lockChannel: BroadcastChannel | null = null;
 /** True once this document successfully opened Storage — do not open again here. */
 let storageOpenedInThisDocument = false;
+/** Ignore our own BroadcastChannel posts (same document also receives them). */
+const TAB_ID =
+  typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `tab-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
@@ -51,11 +56,11 @@ export function isSppLockError(err: unknown): boolean {
   );
 }
 
-/** Ask other Veilpay tabs to reload so they drop their OPFS Access Handle. */
+/** Ask *other* Veilpay tabs to reload so they drop their OPFS Access Handle. */
 export function signalOtherTabsToReleaseSpp() {
   try {
     const bc = new BroadcastChannel(SPP_LOCK_CHANNEL);
-    bc.postMessage({ type: "reload" });
+    bc.postMessage({ type: "reload", from: TAB_ID });
     bc.close();
   } catch {
     /* BroadcastChannel unavailable */
@@ -67,9 +72,12 @@ function ensureLockListener() {
   try {
     lockChannel = new BroadcastChannel(SPP_LOCK_CHANNEL);
     lockChannel.onmessage = (ev) => {
-      if (ev.data?.type === "reload" || ev.data?.type === "release") {
+      const data = ev.data as { type?: string; from?: string } | null;
+      // Same-document BroadcastChannels receive their own posts — ignore ours
+      // or Connect/Shield would reload the page immediately.
+      if (!data || data.from === TAB_ID) return;
+      if (data.type === "reload" || data.type === "release") {
         void softReleaseSppRuntime().finally(() => {
-          // Full navigation is the only reliable way to drop CreateSyncAccessHandle.
           window.location.reload();
         });
       }
@@ -110,8 +118,8 @@ async function bootSharedRuntime(): Promise<SharedRuntime> {
   const bootnodeUrl =
     process.env.NEXT_PUBLIC_SPP_BOOTNODE_URL?.trim() || SPP_DEFAULT_BOOTNODE_URL;
 
-  signalOtherTabsToReleaseSpp();
-  await sleep(400);
+  // Do NOT broadcast reload here — that used to refresh *this* tab mid-Connect.
+  // Only wipe/reset signals other tabs.
 
   const storage = await spp.Storage.open({
     workerUrl: sppAssetUrls.storageWorkerUrl,
