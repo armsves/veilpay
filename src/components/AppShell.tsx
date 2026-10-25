@@ -8,13 +8,14 @@ import { WalletButton } from "./WalletButton";
 const nav = [
   { href: "/app", label: "Overview" },
   { href: "/app/stealth", label: "Stealth" },
+  { href: "/app/private-pay", label: "Private pay" },
   { href: "/app/payroll", label: "Payroll" },
   { href: "/app/cross-border", label: "Cross-border" },
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const fillViewport = pathname === "/app/payroll";
+  const fillViewport = pathname === "/app/payroll" || pathname === "/app/cross-border";
 
   return (
     <div

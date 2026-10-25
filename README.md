@@ -7,7 +7,9 @@ Private payroll banking app on Stellar — stealth addresses, confidential amoun
 | Module | Path | Network |
 |--------|------|---------|
 | Stealth testnet | `src/lib/stealth/testnet.ts` | Stellar testnet (DKSAP-style + [privacy docs](https://developers.stellar.org/docs/build/apps/privacy) / SPP) |
-| Stealth mainnet + Intents | `src/lib/stealth/mainnet-intents.ts` | Mainnet path via NEAR Confidential Intents |
+| Veilpay Name Service | `src/lib/stealth/nameservice.ts` | Fluidkey-style `name.veil` → fresh stealth address on every resolve |
+| Stellar Private Payments | `src/lib/spp/*` | Nethermind SPP testnet pools (deposit / private transfer / withdraw) |
+| Stealth mainnet + Intents | `src/lib/stealth/mainnet-intents.ts` | Mainnet path via Aurora Confidential Intents |
 | Confidential payroll + solvency | `src/lib/confidential/*` | Testnet — B≥L gate, monitor halt, panic lock |
 | Pollar Sandbox ramps | `src/lib/pollar/client.ts` | TestNet SEP-24 ARS/PEN — **no mock bank** |
 
@@ -24,7 +26,7 @@ Open [http://localhost:3000](http://localhost:3000). Connect with **Freighter** 
 Optional env:
 
 - `NEXT_PUBLIC_POLLAR_KEY` — Pollar publishable key (TestNet app with **Pollar Sandbox** enabled)
-- `NEAR_INTENTS_JWT` — live Confidential Intents quotes (mainnet module)
+- `AURORA_INTENTS_API_KEY` — Aurora Intents partner key (server-only, mainnet confidential quotes)
 
 ## Wallet
 
@@ -34,7 +36,9 @@ Freighter via `@stellar/freighter-api`: connect in the header, restore session, 
 
 - `/` — brand landing
 - `/app` — banking overview
-- `/app/stealth` — testnet meta-address + mainnet Intents quote
+- `/app/stealth` — register `you.veil`, resolve stealth addresses, Aurora XLM
+- `/app/private-pay` — SPP privacy pool (official Stellar privacy docs path)
+- `/pay/[name]` — public Fluidkey-style pay page (fresh address each load)
 - `/app/payroll` — fund / pay / drain simulation / panic / unwrap→Pollar
 - `/app/cross-border` — Pollar Sandbox corridors
 

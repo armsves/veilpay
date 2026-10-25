@@ -101,6 +101,15 @@ export function generateStealthPayment(meta: StealthMetaAddress): StealthPayment
   };
 }
 
+function stealthKeypairFromShared(viewingSecretKey: Uint8Array, ephemeralPubKeyB64: string) {
+  const eph = decodeBase64(ephemeralPubKeyB64);
+  const shared = nacl.scalarMult(viewingSecretKey, eph);
+  const digest = sha256(shared);
+  const stealthSeed = sha256(new Uint8Array([...digest, ...decodeUTF8("stealth-addr")]));
+  const kp = Keypair.fromRawEd25519Seed(Buffer.from(stealthSeed));
+  return { kp, digest, viewTag: digest[0]! };
+}
+
 /** Recipient: check if an announcement belongs to us via view tag + ECDH. */
 export function matchesAnnouncement(
   viewingSecretKey: Uint8Array,
@@ -108,15 +117,26 @@ export function matchesAnnouncement(
   viewTag: number,
   spendingPubKeyB64: string,
 ): { match: boolean; stealthAddress?: string } {
-  const eph = decodeBase64(ephemeralPubKeyB64);
-  const shared = nacl.scalarMult(viewingSecretKey, eph);
-  const digest = sha256(shared);
-  if (digest[0] !== viewTag) return { match: false };
-  const stealthSeed = sha256(new Uint8Array([...digest, ...decodeUTF8("stealth-addr")]));
-  const kp = Keypair.fromRawEd25519Seed(Buffer.from(stealthSeed));
-  // Spending key ownership is proven later when sweeping; meta spending pubkey is public.
+  const { kp, viewTag: tag } = stealthKeypairFromShared(viewingSecretKey, ephemeralPubKeyB64);
+  if (tag !== viewTag) return { match: false };
   void spendingPubKeyB64;
   return { match: true, stealthAddress: kp.publicKey() };
+}
+
+/**
+ * Sweep key for a stealth receive the owner scanned.
+ * Same ECDH the sender used → recompute one-time keypair → move funds to Freighter.
+ */
+export function deriveStealthSweepKey(
+  viewingSecretKey: Uint8Array,
+  ephemeralPubKeyB64: string,
+  expectedAddress?: string,
+): { address: string; secret: string; keypair: Keypair } {
+  const { kp } = stealthKeypairFromShared(viewingSecretKey, ephemeralPubKeyB64);
+  if (expectedAddress && kp.publicKey() !== expectedAddress) {
+    throw new Error("Stealth address mismatch — wrong ephemeral or viewing key");
+  }
+  return { address: kp.publicKey(), secret: kp.secret(), keypair: kp };
 }
 
 export function isValidStellarAddress(addr: string) {

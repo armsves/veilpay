@@ -7,29 +7,23 @@ export default function CrossBorderPage() {
   const status = pollarIntegrationStatus();
 
   return (
-    <div className="space-y-8">
-      <div>
-        <p className="pill mb-3">Pollar Sandbox · TestNet</p>
-        <h1 className="display text-4xl tracking-tight">Cross-border</h1>
-        <p className="mt-3 max-w-2xl text-[var(--cream-dim)]">
-          Fiat on/off-ramps via Pollar Sandbox SEP-24 (ARS / PEN). No mock bank.
-        </p>
-      </div>
-
-      <div className="panel p-6">
-        <div className="flex flex-wrap items-center gap-3">
-          <h2 className="display text-2xl">Integration status</h2>
+    <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
+      <div className="flex shrink-0 flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="display text-3xl tracking-tight">Cross-border</h1>
+          <p className="mt-0.5 text-sm text-[var(--cream-dim)]">
+            Pollar Sandbox SEP-24 · ARS / PEN · no mock bank
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
           {status.configured ? (
             <span className="pill pill-ok">API key set</span>
           ) : (
-            <span className="pill">Add NEXT_PUBLIC_POLLAR_KEY</span>
+            <span className="pill">Key missing</span>
           )}
-        </div>
-        <p className="mt-3 text-sm text-[var(--cream-dim)]">{status.dashboardHint}</p>
-        <div className="mt-5 flex flex-wrap gap-2">
-          <OpenPollarRamp label="Open Pollar Sandbox ramp" />
+          <OpenPollarRamp label="Open ramp" className="btn btn-primary !py-1.5 !px-3 text-sm" />
           <a
-            className="btn btn-ghost"
+            className="btn btn-ghost !py-1.5 !px-3 text-sm"
             href="https://dashboard.pollar.xyz"
             target="_blank"
             rel="noreferrer"
@@ -39,22 +33,19 @@ export default function CrossBorderPage() {
         </div>
       </div>
 
-      <div>
-        <h2 className="display mb-4 text-2xl">Sandbox corridors</h2>
-        <div className="grid gap-3 sm:grid-cols-2">
-          {pollarSandboxCorridors.map((c) => (
-            <div key={c.id} className="panel p-5">
-              <div className="flex items-center justify-between">
-                <span className="pill">{c.direction}</span>
-                <span className="text-sm text-[var(--cream-dim)]">
-                  {c.country} · {c.rail}
-                </span>
-              </div>
-              <p className="display mt-3 text-xl">{c.fiat}</p>
-              <p className="mt-2 text-sm text-[var(--cream-dim)]">{c.note}</p>
+      <div className="grid min-h-0 flex-1 grid-cols-1 gap-2 sm:grid-cols-2">
+        {pollarSandboxCorridors.map((c) => (
+          <div key={c.id} className="panel flex min-h-0 flex-col justify-between p-4">
+            <div className="flex items-center justify-between gap-2">
+              <span className="pill">{c.direction}</span>
+              <span className="text-xs text-[var(--cream-dim)]">
+                {c.country} · {c.rail}
+              </span>
             </div>
-          ))}
-        </div>
+            <p className="display mt-3 text-2xl leading-none">{c.fiat}</p>
+            <p className="mt-2 text-sm text-[var(--cream-dim)]">{c.note}</p>
+          </div>
+        ))}
       </div>
     </div>
   );

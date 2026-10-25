@@ -1,10 +1,11 @@
 /**
  * Veilpay Stealth — MAINNET path
- * Private receive via stealth meta-address + cash movement through
- * NEAR Confidential Intents (unlink deposit ↔ withdraw across chains).
+ * Aurora / NEAR Confidential Intents (unlink deposit ↔ withdraw).
  *
- * Docs: https://docs.near-intents.org/.../confidential-swaps
- * Stellar ↔ Intents via HOT bridge (memo deposit).
+ * Docs: https://docs.intents.aurora.dev/intents-swap/confidential-swaps
+ * Quote: POST https://intents-api.aurora.dev/api/quote/{API_KEY}
+ *
+ * Stellar origins require depositMode: "MEMO" and the HOT nep245 asset id.
  */
 
 import { z } from "zod";
@@ -12,60 +13,87 @@ import { z } from "zod";
 export const confidentialityMode = z.enum(["public", "basic", "advanced"]);
 export type ConfidentialityMode = z.infer<typeof confidentialityMode>;
 
+/** HOT Omni Stellar USDC (pubnet) — from Aurora /api/tokens */
+export const STELLAR_USDC_ASSET =
+  "nep245:v2_1.omni.hot.tg:1100_111bzQBB65GxAPAVoxqmMcgYo5oS3txhqs1Uh1cgahKQUeTUq1TJu";
+
+/** HOT Omni Stellar XLM (pubnet) */
+export const STELLAR_XLM_ASSET =
+  "nep245:v2_1.omni.hot.tg:1100_111bzQBB5v7AhLyPMDwS8uJgQV24KaAPXtwyVWu2KXbbfQU6NXRCz";
+
+/** Base native USDC */
+export const BASE_USDC_ASSET =
+  "nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near";
+
 export type IntentsQuoteRequest = {
-  originAsset: string; // e.g. nep141:stellar-usdc...
+  originAsset: string;
   destinationAsset: string;
-  amount: string; // smallest units
-  recipient: string; // destination chain address
+  amount: string;
+  recipient: string;
   refundTo: string;
   confidentiality: ConfidentialityMode;
   deadlineIso: string;
+  slippageTolerance?: number;
+  depositMode?: "SIMPLE" | "MEMO";
+  refundType?: "ORIGIN_CHAIN" | "INTENTS" | "CONFIDENTIAL_INTENTS";
 };
 
 export type IntentsQuote = {
   depositAddress: string;
   memo?: string;
   amountIn: string;
+  amountInFormatted?: string;
   amountOut: string;
+  amountOutFormatted?: string;
   confidentiality: ConfidentialityMode;
   correlationId: string;
   note: string;
 };
 
-const intentsBase =
-  process.env.NEAR_INTENTS_API_URL ?? "https://1click.chaindefuser.com";
+const auroraBase =
+  process.env.AURORA_INTENTS_API_URL ?? "https://intents-api.aurora.dev";
 
-/**
- * Build a confidential foreign→foreign quote payload.
- * Call from a server route with JWT — never expose secrets in the browser.
- */
+export function getAuroraApiKey() {
+  return (
+    process.env.AURORA_INTENTS_API_KEY?.trim() ||
+    process.env.NEAR_INTENTS_JWT?.trim() ||
+    ""
+  );
+}
+
+function isStellarAsset(assetId: string) {
+  return assetId.includes("omni.hot.tg") || assetId.includes("stellar");
+}
+
 export function buildConfidentialQuoteBody(req: IntentsQuoteRequest) {
+  const stellar = isStellarAsset(req.originAsset);
   return {
     dry: false,
-    swapType: "EXACT_INPUT",
+    swapType: "EXACT_INPUT" as const,
     originAsset: req.originAsset,
-    depositType: "ORIGIN_CHAIN",
+    depositType: "ORIGIN_CHAIN" as const,
+    depositMode: req.depositMode ?? (stellar ? "MEMO" : "SIMPLE"),
     destinationAsset: req.destinationAsset,
     amount: req.amount,
     recipient: req.recipient,
-    recipientType: "DESTINATION_CHAIN",
+    recipientType: "DESTINATION_CHAIN" as const,
     refundTo: req.refundTo,
-    refundType: "ORIGIN_CHAIN",
+    refundType: req.refundType ?? (stellar ? "INTENTS" : "ORIGIN_CHAIN"),
     confidentiality: req.confidentiality === "public" ? "public" : req.confidentiality,
+    slippageTolerance: req.slippageTolerance ?? 100,
     deadline: req.deadlineIso,
   };
 }
 
-/** Client-safe stub used when JWT is not configured (demo UI). */
 export async function quoteConfidentialStealthTransfer(
   partial: Omit<IntentsQuoteRequest, "deadlineIso"> & { deadlineIso?: string },
 ): Promise<IntentsQuote> {
   const deadlineIso =
     partial.deadlineIso ?? new Date(Date.now() + 30 * 60_000).toISOString();
   const body = buildConfidentialQuoteBody({ ...partial, deadlineIso });
+  const apiKey = getAuroraApiKey();
 
-  // Without server credentials we return a structured demo quote.
-  if (!process.env.NEAR_INTENTS_JWT) {
+  if (!apiKey) {
     return {
       depositAddress: "GDEMONEARINTENTSTEALTHDEPOSITADDRESS000000000000000",
       memo: "veil-ci-demo",
@@ -73,36 +101,51 @@ export async function quoteConfidentialStealthTransfer(
       amountOut: partial.amount,
       confidentiality: partial.confidentiality,
       correlationId: `demo-${Date.now()}`,
-      note: "Demo quote — set NEAR_INTENTS_JWT to hit 1Click API on mainnet.",
+      note: "Demo quote — set AURORA_INTENTS_API_KEY for live Aurora Intents.",
     };
   }
 
-  const res = await fetch(`${intentsBase}/v0/quote`, {
+  const res = await fetch(`${auroraBase}/api/quote/${apiKey}`, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${process.env.NEAR_INTENTS_JWT}`,
-    },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!res.ok) {
-    throw new Error(`NEAR Intents quote failed: ${res.status} ${await res.text()}`);
+
+  const raw = await res.text();
+  let data: Record<string, unknown> = {};
+  try {
+    data = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+  } catch {
+    throw new Error(`Aurora Intents returned non-JSON (${res.status}): ${raw.slice(0, 200)}`);
   }
-  const data = (await res.json()) as Record<string, unknown>;
+
+  if (!res.ok) {
+    const msg = String(data.message ?? data.error ?? (raw.slice(0, 300) || res.status));
+    throw new Error(`Aurora Intents quote failed (${res.status}): ${msg}`);
+  }
+
+  const quote = (data.quote ?? data) as Record<string, unknown>;
+
   return {
-    depositAddress: String(data.depositAddress ?? data.deposit_address ?? ""),
-    memo: data.memo ? String(data.memo) : undefined,
-    amountIn: String(data.amountIn ?? partial.amount),
-    amountOut: String(data.amountOut ?? partial.amount),
+    depositAddress: String(quote.depositAddress ?? quote.deposit_address ?? ""),
+    memo: quote.depositMemo
+      ? String(quote.depositMemo)
+      : quote.memo
+        ? String(quote.memo)
+        : undefined,
+    amountIn: String(quote.amountIn ?? quote.amount_in ?? partial.amount),
+    amountInFormatted: quote.amountInFormatted ? String(quote.amountInFormatted) : undefined,
+    amountOut: String(quote.amountOut ?? quote.amount_out ?? partial.amount),
+    amountOutFormatted: quote.amountOutFormatted ? String(quote.amountOutFormatted) : undefined,
     confidentiality: partial.confidentiality,
-    correlationId: String(data.correlationId ?? data.id ?? Date.now()),
-    note: "Live NEAR Confidential Intents quote",
+    correlationId: String(data.correlationId ?? quote.correlationId ?? quote.id ?? Date.now()),
+    note: "Live Aurora confidential XLM quote — send to deposit address + memo; payout hits your Freighter wallet",
   };
 }
 
 export const mainnetStealthInfo = {
   id: "stealth-mainnet-intents",
-  label: "Stealth + Confidential NEAR Intents (mainnet)",
-  stack: "Stealth meta-address → HOT bridge → Confidential Intents",
-  docs: "https://docs.near-intents.org/integration/distribution-channels/1click-api/quickstart/confidential-swaps",
+  label: "Stealth + Confidential Aurora / NEAR Intents (mainnet)",
+  stack: "Stealth meta-address → HOT bridge → Aurora Confidential Intents",
+  docs: "https://docs.intents.aurora.dev/intents-swap/confidential-swaps",
 } as const;

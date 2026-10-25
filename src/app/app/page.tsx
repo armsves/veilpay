@@ -60,12 +60,17 @@ export default function OverviewPage() {
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {[
           {
             href: "/app/stealth",
-            title: "Stealth addresses",
-            body: "Testnet privacy tools + mainnet Confidential Intents path.",
+            title: "Stealth names",
+            body: "Register you.veil — Fluidkey-style one-time receives.",
+          },
+          {
+            href: "/app/private-pay",
+            title: "Private payments",
+            body: "Nethermind SPP pool — deposit, private transfer, withdraw.",
           },
           {
             href: "/app/payroll",
