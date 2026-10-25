@@ -1,0 +1,24 @@
+# Veilpay Confidential Token (testnet)
+
+OpenZeppelin `stellar-confidential` v0.8.0 token with **SolvencyHooks**:
+ratio check before withdraw, atomic reverse on WOULD_UNBALANCE, panic halt.
+
+| Role | Contract ID |
+|------|-------------|
+| Verifier | `CCTW4FGYDGE7EEIFAPRNPMZPZXZWU6A7FT5ZFUTNT2LUYKTBI6A6WVC4` |
+| Auditor | `CASPCMOFIJCPSYLXR5CUOPMM5RKBUDK6UB5LH6RBCYLTFSHDDBCCI4MF` |
+| **Confidential token** | `CBUOT3ETCV4R6AVGXBVNIWHWE64AWOH3GV53AEUGCTPBS73YIM7LFNE7` |
+| Underlying (native SAC) | `CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC` |
+| Owner | `GCWCP6UXP7XCZYZML5XEF26FL7HUCRONBO6PTPELKERARB2DS4D6VFEC` |
+
+Min coverage: `10000` bps (B ≥ L).
+
+Env:
+
+```
+NEXT_PUBLIC_CONFIDENTIAL_TOKEN_ID=CBUOT3ETCV4R6AVGXBVNIWHWE64AWOH3GV53AEUGCTPBS73YIM7LFNE7
+NEXT_PUBLIC_CONFIDENTIAL_VERIFIER_ID=CCTW4FGYDGE7EEIFAPRNPMZPZXZWU6A7FT5ZFUTNT2LUYKTBI6A6WVC4
+NEXT_PUBLIC_CONFIDENTIAL_AUDITOR_ID=CASPCMOFIJCPSYLXR5CUOPMM5RKBUDK6UB5LH6RBCYLTFSHDDBCCI4MF
+```
+
+Holder ops (`register` / `deposit` / `transfer` / `withdraw`) need the OZ Confidential Token SDK + proofs. Admin/solvency views (`solvency`, `halt_if_insolvent`, `sync_assets`, …) are plain Soroban invokes.
