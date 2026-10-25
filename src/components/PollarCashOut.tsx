@@ -1,10 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { usePollar } from "@pollar/react";
 import { toast } from "react-toastify";
 import Link from "next/link";
 import { hasPollarKey } from "@/lib/pollar/client";
+import { useWallet } from "@/components/WalletProvider";
+import {
+  formatXlm,
+  loadConfidentialBalanceSnap,
+  peekConfidentialBalances,
+  type ConfidentialBalanceSnap,
+} from "@/lib/confidential/session";
 
 type RouteStatus = {
   ok: boolean;
@@ -72,6 +79,7 @@ function PollarCashOutInner({
   routes: RouteStatus | null;
   onRefreshRoutes: () => void;
 }) {
+  const freighter = useWallet();
   const {
     isAuthenticated,
     wallet,
@@ -87,9 +95,55 @@ function PollarCashOutInner({
     walletBalance,
   } = usePollar();
 
+  const [confSnap, setConfSnap] = useState<ConfidentialBalanceSnap | null>(null);
+  const [confBusy, setConfBusy] = useState(false);
+  const [confErr, setConfErr] = useState<string | null>(null);
+  const peekedFor = useRef<string | null>(null);
+
   const address = addressOf(wallet) ?? wallets.map((w) => addressOf(w)).find(Boolean) ?? null;
   const routeCount = routes?.routeCount ?? 0;
   const routesReady = Boolean(routes?.ok && routeCount > 0);
+
+  const refreshConf = useCallback(
+    async (opts?: { silent?: boolean }) => {
+      if (!freighter.address) {
+        setConfSnap(null);
+        setConfErr(null);
+        return;
+      }
+      setConfBusy(true);
+      setConfErr(null);
+      try {
+        const bal = await peekConfidentialBalances(freighter.address);
+        setConfSnap({
+          spendable: formatXlm(bal.spendable),
+          receiving: formatXlm(bal.receiving),
+          available: formatXlm(bal.spendable + bal.receiving),
+          at: Date.now(),
+        });
+        if (!opts?.silent) toast.success("Confidential balance updated");
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        setConfErr(msg);
+        if (!opts?.silent) toast.error(msg);
+      } finally {
+        setConfBusy(false);
+      }
+    },
+    [freighter.address],
+  );
+
+  useEffect(() => {
+    if (!freighter.address) {
+      setConfSnap(null);
+      peekedFor.current = null;
+      return;
+    }
+    setConfSnap(loadConfidentialBalanceSnap(freighter.address));
+    if (peekedFor.current === freighter.address) return;
+    peekedFor.current = freighter.address;
+    void refreshConf({ silent: true });
+  }, [freighter.address, refreshConf]);
 
   const copyAddress = async () => {
     if (!address) return;
@@ -140,6 +194,65 @@ function PollarCashOutInner({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
+      <section className="panel flex shrink-0 flex-wrap items-center justify-between gap-3 p-3">
+        <div className="min-w-0">
+          <p className="text-[10px] uppercase tracking-wide text-[var(--cream-dim)]">
+            Available to cash out
+          </p>
+          {freighter.address ? (
+            <>
+              <p className="display text-2xl leading-none tracking-tight text-[var(--mint)]">
+                {confSnap?.available ?? (confBusy ? "…" : "—")}{" "}
+                <span className="text-base text-[var(--cream-dim)]">XLM conf.</span>
+              </p>
+              <p className="mt-1 text-[11px] text-[var(--cream-dim)]">
+                {confSnap
+                  ? `Spendable ${confSnap.spendable} · receiving ${confSnap.receiving} · Freighter ${shortAddr(freighter.address)}`
+                  : confBusy
+                    ? "Approve Freighter to decode openings…"
+                    : "Unlock openings to see balance"}
+              </p>
+              {confErr ? (
+                <p className="mt-0.5 truncate text-[10px] text-[var(--danger)]">{confErr}</p>
+              ) : null}
+            </>
+          ) : (
+            <>
+              <p className="display text-2xl leading-none tracking-tight text-[var(--cream-dim)]">
+                —
+              </p>
+              <p className="mt-1 text-[11px] text-[var(--cream-dim)]">
+                Connect Freighter (header) to read confidential balance
+              </p>
+            </>
+          )}
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {freighter.address ? (
+            <button
+              type="button"
+              className="btn btn-ghost !px-2.5 !py-1.5 text-xs"
+              disabled={confBusy}
+              onClick={() => void refreshConf()}
+            >
+              {confBusy ? "Reading…" : "Refresh balance"}
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="btn btn-ghost !px-2.5 !py-1.5 text-xs"
+              disabled={freighter.connecting}
+              onClick={() => void freighter.connect()}
+            >
+              Connect Freighter
+            </button>
+          )}
+          <Link href="/app/confidential" className="btn btn-ghost !px-2.5 !py-1.5 text-xs">
+            Confidential
+          </Link>
+        </div>
+      </section>
+
       <div className="grid shrink-0 gap-2 sm:grid-cols-3 sm:items-start">
         <section className="panel flex flex-col gap-2 p-3">
           <h2 className="display text-lg leading-none tracking-tight">1 · Account</h2>
@@ -231,7 +344,7 @@ function PollarCashOutInner({
             )}
           </div>
           <p className="text-xs leading-snug text-[var(--cream-dim)]">
-            Sell Stellar ARS → sandbox bank. Need ARS in the Pollar wallet.
+            Withdraw conf. → Pollar ARS → sell to sandbox bank.
           </p>
           <div className="flex flex-wrap gap-1.5">
             <button

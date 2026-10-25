@@ -354,13 +354,99 @@ export async function localBalances(session: ConfidentialSession): Promise<{
 } | null> {
   try {
     const s = await session.engine.sync();
-    return {
+    const bal = {
       spendable: s.spendable?.v ?? 0n,
       receiving: s.receiving?.v ?? 0n,
     };
+    saveConfidentialBalanceSnap(session.address, bal);
+    return bal;
   } catch {
     return null;
   }
+}
+
+const balSnapKey = (address: string) =>
+  `veilpay-ct-bal:${CONFIDENTIAL_TOKEN_ID}:${address}`;
+
+export type ConfidentialBalanceSnap = {
+  spendable: string;
+  receiving: string;
+  available: string;
+  at: number;
+};
+
+/** Last decoded openings (no Freighter) — filled by {@link peekConfidentialBalances}. */
+export function loadConfidentialBalanceSnap(address: string): ConfidentialBalanceSnap | null {
+  if (typeof localStorage === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(balSnapKey(address));
+    if (!raw) return null;
+    const data = JSON.parse(raw) as ConfidentialBalanceSnap;
+    if (!data?.available) return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+function saveConfidentialBalanceSnap(address: string, bal: { spendable: bigint; receiving: bigint }) {
+  if (typeof localStorage === "undefined") return;
+  const snap: ConfidentialBalanceSnap = {
+    spendable: formatXlm(bal.spendable),
+    receiving: formatXlm(bal.receiving),
+    available: formatXlm(bal.spendable + bal.receiving),
+    at: Date.now(),
+  };
+  localStorage.setItem(balSnapKey(address), JSON.stringify(snap));
+}
+
+/**
+ * Decode confidential openings for Freighter `address` without COI / UltraHonk.
+ * Needs one Freighter `signMessage` (privacy key root). Safe on Cash out where
+ * Pollar iframes must not run under COEP.
+ */
+export async function peekConfidentialBalances(address: string): Promise<{
+  spendable: bigint;
+  receiving: bigint;
+  registered: boolean;
+}> {
+  if (cached && cached.address === address) {
+    const bal = await localBalances(cached);
+    const spendable = bal?.spendable ?? 0n;
+    const receiving = bal?.receiving ?? 0n;
+    saveConfidentialBalanceSnap(address, { spendable, receiving });
+    return {
+      spendable,
+      receiving,
+      registered: await checkRegistered(address),
+    };
+  }
+
+  const sdk = await import("stellar-confidential-token-sdk");
+  const client = await makeClient();
+  const registered = await checkRegistered(address);
+  const root = await freighterRoot(address);
+  const d = sdk.deriveSk(root, CONFIDENTIAL_TOKEN_ID, address);
+  const keys = sdk.deriveKeys(d.sk, d.addrF);
+  const store = new sdk.LocalStorageStore(`veilpay-ct:${CONFIDENTIAL_TOKEN_ID}:`);
+  const engine = new sdk.StateEngine({
+    client,
+    store,
+    keys,
+    address,
+    fromLedger: resolveFromLedger(address),
+  });
+  let spendable = 0n;
+  let receiving = 0n;
+  try {
+    const s = await engine.sync();
+    spendable = s.spendable?.v ?? 0n;
+    receiving = s.receiving?.v ?? 0n;
+  } catch {
+    /* empty openings */
+  }
+  saveConfidentialBalanceSnap(address, { spendable, receiving });
+  return { spendable, receiving, registered };
 }
 
 export function formatXlm(stroops: bigint | string | number): string {
