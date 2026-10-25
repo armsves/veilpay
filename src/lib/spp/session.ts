@@ -298,7 +298,10 @@ export async function createSppClient(opts?: {
   poolContract?: string;
   bootnodeUrl?: string;
   userAddress?: string;
+  signerAddress?: string;
   signer?: import("stellar-private-payments").WalletSigner;
+  /** Skip derive/register — use when note-owner keys already exist in OPFS. */
+  skipKeySetup?: boolean;
 }) {
   const { FreighterSigner } = await import("stellar-private-payments/freighter");
   const { client, networkPassphrase, rpcUrl } = await getSharedSppRuntime();
@@ -308,21 +311,50 @@ export async function createSppClient(opts?: {
     {
       networkPassphrase,
       userAddress: opts?.userAddress,
+      signerAddress: opts?.signerAddress,
     },
     signer,
   );
 
-  await account.derivePrivacyKeys();
-  try {
-    await account.registerPublicKeys();
-  } catch {
-    // Already registered with different keys is fine for receive attempts
+  if (!opts?.skipKeySetup) {
+    await account.derivePrivacyKeys();
+    try {
+      await account.registerPublicKeys();
+    } catch {
+      // Already registered with different keys is fine for receive attempts
+    }
   }
 
   const poolContract = opts?.poolContract ?? SPP_XLM_POOL_ID;
   const pool = await account.pool({ poolContract });
 
   return { client, account, pool, poolContract, networkPassphrase, rpcUrl };
+}
+
+/**
+ * Deposit into the pool so notes belong to `ownerAddress`, while `stealthSigner`
+ * pays the Soroban tx / SAC from the stealth burner.
+ *
+ * Avoids deposit-as-stealth + private transfer (which stranded notes when
+ * transfer targeted registry keys the Freighter wallet could not decrypt).
+ */
+export async function createOwnerNotesPaidByStealth(opts: {
+  ownerAddress: string;
+  stealthAddress: string;
+  stealthSigner: import("stellar-private-payments").WalletSigner;
+  poolContract?: string;
+}) {
+  // 1) Ensure Freighter-derived privacy keys exist for the note owner.
+  await createSppClient({ userAddress: opts.ownerAddress });
+
+  // 2) Same note owner, stealth as fee/SAC payer — do not re-derive (signer ≠ owner).
+  return createSppClient({
+    userAddress: opts.ownerAddress,
+    signerAddress: opts.stealthAddress,
+    signer: opts.stealthSigner,
+    skipKeySetup: true,
+    poolContract: opts.poolContract,
+  });
 }
 
 export function xlmToStroops(amount: string): bigint {

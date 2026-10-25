@@ -106,7 +106,7 @@ export default function StealthPage() {
         }),
       });
       setStatus(
-        `Shielded ${result.transferredXlm} XLM into your SPP private pool (not visible in Freighter yet). Open Private pay → Connect SPP → Withdraw to move it to your wallet. ~${result.leftoverXlm.toFixed(2)} XLM stays on the burner as reserve.`,
+        `Shielded ${result.transferredXlm} XLM into your SPP balance (same keys as Private pay Deposit). Open Private pay → Withdraw to move XLM into Freighter. ~${result.leftoverXlm.toFixed(2)} XLM stays on the burner as reserve.`,
       );
       await loadMyName();
     } catch (e) {
