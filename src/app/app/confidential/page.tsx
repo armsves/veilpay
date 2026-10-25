@@ -94,6 +94,10 @@ export default function ConfidentialPage() {
   }, []);
 
   const prevAddress = useRef<string | null | undefined>(undefined);
+  const unlockInFlight = useRef(false);
+  /** Address we last successfully unlocked for (skip repeat auto-unlock). */
+  const unlockedFor = useRef<string | null>(null);
+
   useEffect(() => {
     const switched =
       prevAddress.current !== undefined && prevAddress.current !== address;
@@ -103,11 +107,12 @@ export default function ConfidentialPage() {
     setSession(null);
     setBalances(null);
     setLog([]);
+    unlockedFor.current = null;
     void loadPublicStatus(address);
 
     if (switched && address) {
       toast.info(
-        `Switched to ${address.slice(0, 6)}…${address.slice(-4)} — unlock balances again`,
+        `Switched to ${address.slice(0, 6)}…${address.slice(-4)} — unlocking balances…`,
       );
     }
   }, [address, loadPublicStatus]);
@@ -125,29 +130,57 @@ export default function ConfidentialPage() {
     [loadPublicStatus],
   );
 
-  async function ensureSession(): Promise<ConfidentialSession> {
+  const ensureSession = useCallback(async (): Promise<ConfidentialSession> => {
     if (!address) throw new Error("Connect Freighter on Testnet first");
-    if (session) return session;
+    if (session && session.address === address) return session;
     push("Approve Freighter message (privacy key root)…");
     const s = await openConfidentialSession(address);
     setSession(s);
     await refreshSessionViews(s);
     push("Confidential keys ready", true);
     return s;
-  }
+  }, [address, session, push, refreshSessionViews]);
 
   /** Sync openings; if receiving > 0, merge into spendable (Freighter sign). */
-  async function syncAndAutoMerge(s: ConfidentialSession) {
-    await refreshSessionViews(s);
-    const merged = await mergeReceivingIfNeeded(s);
-    if (merged) {
-      push(
-        `Auto-merged ${formatXlm(merged.amount)} XLM receiving → spendable — ${merged.hash.slice(0, 12)}…`,
-        true,
-      );
+  const syncAndAutoMerge = useCallback(
+    async (s: ConfidentialSession) => {
       await refreshSessionViews(s);
-    }
-  }
+      const merged = await mergeReceivingIfNeeded(s);
+      if (merged) {
+        push(
+          `Auto-merged ${formatXlm(merged.amount)} XLM receiving → spendable — ${merged.hash.slice(0, 12)}…`,
+          true,
+        );
+        await refreshSessionViews(s);
+      }
+    },
+    [push, refreshSessionViews],
+  );
+
+  const unlockBalances = useCallback(async () => {
+    if (!address) throw new Error("Connect Freighter on Testnet first");
+    const s = await ensureSession();
+    await syncAndAutoMerge(s);
+    unlockedFor.current = address;
+    push("Balances loaded from openings", true);
+  }, [address, ensureSession, syncAndAutoMerge, push]);
+
+  // Auto-unlock when Freighter is ready, COI is on, and account is registered.
+  useEffect(() => {
+    if (!address || !isolated || registered !== true) return;
+    if (unlockedFor.current === address || unlockInFlight.current) return;
+
+    unlockInFlight.current = true;
+    setBusyAction("unlock");
+    void unlockBalances()
+      .catch((e) => {
+        push(e instanceof Error ? e.message : String(e), false);
+      })
+      .finally(() => {
+        unlockInFlight.current = false;
+        setBusyAction(null);
+      });
+  }, [address, isolated, registered, unlockBalances, push]);
 
   async function runAction(action: Exclude<BusyAction, null>, fn: () => Promise<void>) {
     setBusyAction(action);
@@ -161,11 +194,7 @@ export default function ConfidentialPage() {
   }
 
   async function onUnlockBalances() {
-    await runAction("unlock", async () => {
-      const s = await ensureSession();
-      await syncAndAutoMerge(s);
-      push("Balances loaded from openings", true);
-    });
+    await runAction("unlock", () => unlockBalances());
   }
 
   async function onRegister() {
