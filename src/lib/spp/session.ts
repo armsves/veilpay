@@ -358,8 +358,8 @@ export async function ensureSppKeysOnChain(
       }
       if (/MismatchingParameterLen|UnexpectedSize|prepare register/i.test(msg)) {
         throw new Error(
-          `SPP key register failed (SDK/circuit mismatch or stale local keys). ` +
-            `Open Private pay → Reset SPP wallet, reload, then Connect SPP again. (${msg.slice(0, 120)})`,
+          `SPP key register failed (stale local keys or old SDK). ` +
+            `Use Reset SPP below / Private pay → Reset SPP wallet, reload, then Connect again. (${msg.slice(0, 100)})`,
         );
       }
       throw e instanceof Error ? e : new Error(msg);

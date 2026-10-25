@@ -4,9 +4,9 @@
   "private": true,
   "scripts": {
     "dev": "next dev --turbopack",
-    "prebuild": "node scripts/vendor-bb.mjs && node scripts/patch-ct-events.mjs",
+    "prebuild": "node scripts/vendor-bb.mjs && node scripts/vendor-spp.mjs && node scripts/patch-ct-events.mjs",
     "build": "next build --turbopack",
-    "postinstall": "node scripts/vendor-bb.mjs && node scripts/patch-ct-events.mjs",
+    "postinstall": "node scripts/vendor-bb.mjs && node scripts/vendor-spp.mjs && node scripts/patch-ct-events.mjs",
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit"

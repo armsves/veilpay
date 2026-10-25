@@ -13,6 +13,7 @@ import {
   createSppClient,
   ensureSppKeysOnChain,
   isSppLockError,
+  wipeSppLocalWalletAndReload,
 } from "@/lib/spp/session";
 import {
   loadLocalVeilRegistration,
@@ -534,11 +535,28 @@ export default function StealthPage() {
                   {busy ? "Connecting…" : sppReady === false ? "Connect SPP for payroll" : "Connect SPP…"}
                 </button>
               )}
+              <button
+                type="button"
+                className="btn btn-ghost !py-2 !px-4 text-sm"
+                disabled={busy}
+                onClick={() => {
+                  if (
+                    confirm(
+                      "Wipe this site’s SPP wallet and reload? Required after SDK updates. Close other Veilpay tabs first.",
+                    )
+                  ) {
+                    void wipeSppLocalWalletAndReload();
+                  }
+                }}
+                title="Clear OPFS privacy keys then reload"
+              >
+                Reset SPP
+              </button>
             </div>
             {sppReady === false && (
               <p className="text-xs text-[var(--amber)]">
-                Your .veil is claimed, but SPP keys are missing — Connect SPP once so payroll can pay you
-                privately (Freighter may prompt).
+                Your .veil is claimed, but SPP keys are missing — Connect SPP once (Freighter may prompt). If
+                register fails, hit Reset SPP first.
               </p>
             )}
             {resolvedPay && (

@@ -7,14 +7,13 @@
 export const SPP_NPM = "stellar-private-payments@0.2.1";
 
 /**
- * Circuits must match the installed SDK (0.2.1 → circuits lock v0.6).
- * GH Pages currently ships v0.7 which breaks registerPublicKeys
- * (HostError UnexpectedSize / MismatchingParameterLen on registry.register).
- * unpkg serves the npm package; jsDelivr 403s the oversized tarball.
- * Workers: same-origin under /spp/workers — cross-origin Worker() panics.
+ * Circuits + WASM must match the live testnet registry (circuits v0.7 /
+ * keyOwnership). npm `stellar-private-payments@0.2.1` is still v0.6 — postinstall
+ * `scripts/vendor-spp.mjs` overlays the GH Pages SDK/workers. Circuits stay on
+ * GH Pages (too large to vendor). Workers: same-origin (cross-origin Worker panics).
  */
 export const SPP_CIRCUITS_ORIGIN =
-  "https://unpkg.com/stellar-private-payments@0.2.1/dist";
+  "https://nethermindeth.github.io/stellar-private-payments/js/stellar-private-payments/dist";
 
 export const sppAssetUrls = {
   circuitsBaseUrl: `${SPP_CIRCUITS_ORIGIN}/circuits/`,
