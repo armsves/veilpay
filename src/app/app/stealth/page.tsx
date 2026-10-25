@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useWallet } from "@/components/WalletProvider";
+import { shieldStealthViaSpp } from "@/lib/spp/shield";
 
 type Meta = { encoded: string; spendingPubKey: string; viewingPubKey: string };
 type Payment = { stealthAddress: string; ephemeralPubKey: string; viewTag: number; memoHint: string };
@@ -74,20 +75,35 @@ export default function StealthPage() {
           owner: wallet.address,
           announcementId: item.id.startsWith("idx_") ? undefined : item.id,
           index: item.index,
-          submit: true,
         }),
       });
       const data = await res.json();
       if (!data.ok) throw new Error(data.error);
-      if (data.needsFunding) {
+      if (data.balanceXlm < 3) {
         setStatus(
-          `Stealth ${data.stealthAddress.slice(0, 8)}… has ${data.balanceXlm} XLM — fund it first, then sweep.`,
+          `Stealth has ${data.balanceXlm} XLM — need ≥3 XLM to SPP-shield (≈2 XLM Soroban fee buffer + ≥1 XLM deposit).`,
         );
-      } else if (data.submitted) {
-        setStatus(`Swept ${data.amountXlm} XLM → Freighter · tx ${data.hash}`);
-      } else {
-        setStatus(data.note ?? "Sweep prepared");
+        return;
       }
+      const result = await shieldStealthViaSpp({
+        stealthSecret: data.stealthSecret,
+        stealthAddress: data.stealthAddress,
+        ownerAddress: wallet.address,
+        onProgress: (msg) => setStatus(msg),
+      });
+      await fetch("/api/names", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "markSwept",
+          owner: wallet.address,
+          index: data.index ?? item.index,
+          announcementId: item.id.startsWith("idx_") ? undefined : item.id,
+        }),
+      });
+      setStatus(
+        `Shielded ${result.transferredXlm} XLM via SPP → your private balance (not a public Freighter payment). ~${result.leftoverXlm.toFixed(2)} XLM fee dust left on burner.`,
+      );
       await loadMyName();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -109,7 +125,39 @@ export default function StealthPage() {
       });
       const data = await res.json();
       if (!data.ok) throw new Error(data.error);
-      setStatus(data.note ?? `Swept ${data.totalSweptXlm ?? 0} XLM`);
+      const ready = (data.ready ?? []) as Array<{
+        index: number;
+        address: string;
+        secret: string;
+        balanceXlm: number;
+      }>;
+      if (ready.length === 0) {
+        setStatus(data.note);
+        return;
+      }
+      let shielded = 0;
+      for (const c of ready) {
+        setStatus(`Shielding #${c.index} (${c.balanceXlm} XLM) via SPP…`);
+        const result = await shieldStealthViaSpp({
+          stealthSecret: c.secret,
+          stealthAddress: c.address,
+          ownerAddress: wallet.address,
+          onProgress: (msg) => setStatus(`#${c.index}: ${msg}`),
+        });
+        shielded += Number(result.transferredXlm);
+        await fetch("/api/names", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "markSwept",
+            owner: wallet.address,
+            index: c.index,
+          }),
+        });
+      }
+      setStatus(
+        `SPP-shielded ${shielded} XLM from ${ready.length} address(es) into your private pool balance.`,
+      );
       await loadMyName();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -318,8 +366,8 @@ export default function StealthPage() {
             <div className="border-t border-[var(--line)] pt-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="text-sm text-[var(--cream-dim)]">
-                  Senders pay a one-time address. Sweep moves XLM to Freighter — keys re-derive from
-                  your wallet even after deploys.
+                  Senders pay a one-time address. Shield deposits into the SPP pool from the burner,
+                  then privately transfers to you — never a public payment to Freighter.
                 </p>
                 <button
                   type="button"
@@ -327,7 +375,7 @@ export default function StealthPage() {
                   disabled={busy}
                   onClick={() => void scanSweepAll()}
                 >
-                  {busy ? "Scanning…" : "Scan & sweep all"}
+                  {busy ? "Shielding…" : "Scan & shield (SPP)"}
                 </button>
               </div>
               <ul className="mt-3 max-h-40 space-y-2 overflow-y-auto">
@@ -352,10 +400,15 @@ export default function StealthPage() {
                     <button
                       type="button"
                       className="btn btn-primary !py-1 !px-2.5 text-[10px]"
-                      disabled={busy || item.swept || item.balanceXlm <= 1}
+                      disabled={busy || item.swept || item.balanceXlm < 3}
                       onClick={() => void sweepItem(item)}
+                      title={
+                        item.balanceXlm < 3
+                          ? "Need ≥3 XLM for SPP shield + fee buffer"
+                          : "SPP deposit + private transfer"
+                      }
                     >
-                      Sweep
+                      Shield
                     </button>
                   </li>
                 ))}

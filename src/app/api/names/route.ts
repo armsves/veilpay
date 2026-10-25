@@ -6,7 +6,6 @@ import {
   validateName,
 } from "@/lib/stealth/nameservice";
 import { fetchXlmBalance } from "@/lib/stellar/rpc";
-import { sweepStealthToOwner } from "@/lib/stellar/sweep-account";
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
@@ -131,6 +130,8 @@ export async function POST(req: Request) {
         });
       }
       case "sweep": {
+        // Prepare only — client shields via SPP (deposit + private transfer).
+        // Never public-pay stealth → Freighter (that links the receive).
         if (!body.owner || (!body.announcementId && body.index == null)) {
           return NextResponse.json(
             { ok: false, error: "owner and announcementId (or index) required" },
@@ -140,8 +141,6 @@ export async function POST(req: Request) {
 
         let stealthSecret: string;
         let stealthAddress: string;
-        let destination: string;
-        const announcementId = body.announcementId;
         let index = body.index;
 
         if (body.announcementId) {
@@ -151,7 +150,6 @@ export async function POST(req: Request) {
           });
           stealthSecret = prepared.stealthSecret;
           stealthAddress = prepared.stealthAddress;
-          destination = prepared.destination;
           index = prepared.index;
         } else {
           const { candidates } = registry.listSweepCandidates(body.owner, index ?? 64);
@@ -159,84 +157,61 @@ export async function POST(req: Request) {
           if (!hit) throw new Error("Index out of range");
           stealthSecret = hit.secret;
           stealthAddress = hit.address;
-          destination = body.owner;
         }
 
-        const result = await sweepStealthToOwner({
-          stealthSecret,
+        const balanceXlm = await fetchXlmBalance(stealthAddress);
+        return NextResponse.json({
+          ok: true,
+          prepared: true,
           stealthAddress,
-          destination,
-          submit: Boolean(body.submit),
+          stealthSecret,
+          balanceXlm,
+          index,
+          destination: body.owner,
+          note: "Client must SPP-deposit from stealth then private-transfer to owner — do not public-pay Freighter.",
         });
-
-        if ("needsFunding" in result && result.needsFunding) {
-          return NextResponse.json({
-            ...result,
-            note: "No spendable XLM yet (account missing or only base reserve).",
-          });
-        }
-
-        if (result.submitted) {
-          if (announcementId) registry.markSwept(body.owner, announcementId);
-          if (index != null) registry.markIndexSwept(body.owner, index);
-        }
-
-        return NextResponse.json(result);
       }
       case "scanSweep": {
         if (!body.owner) {
           return NextResponse.json({ ok: false, error: "owner required" }, { status: 400 });
         }
         const { candidates } = registry.listSweepCandidates(body.owner, 64);
-        const swept: Array<{ index: number; address: string; amountXlm: number; hash: string }> = [];
-        const skipped: Array<{ index: number; address: string; balanceXlm: number }> = [];
+        const ready: Array<{
+          index: number;
+          address: string;
+          secret: string;
+          balanceXlm: number;
+        }> = [];
 
         for (const c of candidates) {
           const balanceXlm = await fetchXlmBalance(c.address);
-          if (balanceXlm <= 1.00001) {
-            if (balanceXlm > 0) skipped.push({ index: c.index, address: c.address, balanceXlm });
-            continue;
-          }
-          try {
-            const result = await sweepStealthToOwner({
-              stealthSecret: c.secret,
-              stealthAddress: c.address,
-              destination: body.owner,
-              submit: true,
-            });
-            if ("needsFunding" in result && result.needsFunding) {
-              skipped.push({ index: c.index, address: c.address, balanceXlm });
-              continue;
-            }
-            if (result.submitted && result.hash) {
-              swept.push({
-                index: c.index,
-                address: c.address,
-                amountXlm: result.amountXlm,
-                hash: result.hash,
-              });
-              registry.markIndexSwept(body.owner, c.index);
-            }
-          } catch (e) {
-            skipped.push({
+          // Need headroom for SPP Soroban fees (~2 XLM) + ≥1 XLM deposit.
+          if (balanceXlm >= 3) {
+            ready.push({
               index: c.index,
               address: c.address,
+              secret: c.secret,
               balanceXlm,
             });
-            void e;
           }
         }
 
         return NextResponse.json({
           ok: true,
-          swept,
-          skipped,
-          totalSweptXlm: swept.reduce((s, x) => s + x.amountXlm, 0),
+          ready,
           note:
-            swept.length === 0
-              ? "No indexed stealth addresses with spendable balance. Pre-fix random-ECDH deposits cannot be recovered without their ephemeral key."
-              : `Swept ${swept.length} address(es) to Freighter.`,
+            ready.length === 0
+              ? "No stealth addresses with ≥3 XLM (needed for SPP shield + fee buffer)."
+              : `Prepared ${ready.length} address(es) for SPP shield — client deposits then private-transfers.`,
         });
+      }
+      case "markSwept": {
+        if (!body.owner || body.index == null) {
+          return NextResponse.json({ ok: false, error: "owner and index required" }, { status: 400 });
+        }
+        registry.markIndexSwept(body.owner, body.index);
+        if (body.announcementId) registry.markSwept(body.owner, body.announcementId);
+        return NextResponse.json({ ok: true });
       }
       default:
         return NextResponse.json({ ok: false, error: "unknown action" }, { status: 400 });

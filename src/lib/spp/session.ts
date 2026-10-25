@@ -25,6 +25,8 @@ export async function createSppClient(opts?: {
   poolContract?: string;
   bootnodeUrl?: string;
   userAddress?: string;
+  /** Defaults to Freighter. Pass a stealth KeypairSigner to shield burner funds. */
+  signer?: import("stellar-private-payments").WalletSigner;
 }) {
   const spp = await import("stellar-private-payments");
   const { FreighterSigner } = await import("stellar-private-payments/freighter");
@@ -63,7 +65,7 @@ export async function createSppClient(opts?: {
 
   await client.backgroundSync();
 
-  const signer = new FreighterSigner();
+  const signer = opts?.signer ?? new FreighterSigner();
   const account = await client.account(
     {
       networkPassphrase,
