@@ -6,6 +6,9 @@ import { useWallet } from "@/components/WalletProvider";
 import { sppDocs, SPP_XLM_POOL_ID } from "@/lib/spp/config";
 import {
   createSppClient,
+  isSppLockError,
+  releaseSppRuntime,
+  signalOtherTabsToReleaseSpp,
   sppKeysMatch,
   stroopsToXlm,
   wipeSppLocalWallet,
@@ -88,12 +91,20 @@ export default function PrivatePayPage() {
     setError(null);
     push("Booting SPP (WASM + circuits from CDN)…");
     try {
+      signalOtherTabsToReleaseSpp();
       const s = await createSppClient({ userAddress: wallet.address });
       setSession(s);
       push(`Connected as ${wallet.address.slice(0, 6)}… · pool ${s.poolContract.slice(0, 8)}…`);
       await refreshBalance(s, wallet.address);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (isSppLockError(e)) {
+        setError(
+          "SPP database is locked — close every other Veilpay tab (Stealth, Private pay, pay pages), wait 2 seconds, reload, then Connect again.",
+        );
+        await releaseSppRuntime();
+      } else {
+        setError(e instanceof Error ? e.message : String(e));
+      }
     } finally {
       setBusy(false);
     }
@@ -154,7 +165,14 @@ export default function PrivatePayPage() {
       }
       await refreshBalance(s, wallet.address);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      if (isSppLockError(e)) {
+        setError(
+          "SPP database locked during reset — close other Veilpay tabs, reload this page, then try Reset again.",
+        );
+        await releaseSppRuntime();
+      } else {
+        setError(e instanceof Error ? e.message : String(e));
+      }
     } finally {
       setBusy(false);
     }

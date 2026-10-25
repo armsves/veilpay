@@ -29,7 +29,46 @@ type SharedRuntime = {
   rpcUrl: string;
 };
 
+const SPP_LOCK_CHANNEL = "veilpay-spp-lock";
+
 let sharedBoot: Promise<SharedRuntime> | null = null;
+let lockChannel: BroadcastChannel | null = null;
+
+function sleep(ms: number) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+export function isSppLockError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /local database|Access Handle|OPFS|another tab|another window|NoModificationAllowed|database/i.test(
+    msg,
+  );
+}
+
+/** Ask other Veilpay tabs to drop their SPP OPFS handle. */
+export function signalOtherTabsToReleaseSpp() {
+  try {
+    const bc = new BroadcastChannel(SPP_LOCK_CHANNEL);
+    bc.postMessage({ type: "release" });
+    bc.close();
+  } catch {
+    /* BroadcastChannel unavailable */
+  }
+}
+
+function ensureLockListener() {
+  if (typeof window === "undefined" || lockChannel) return;
+  try {
+    lockChannel = new BroadcastChannel(SPP_LOCK_CHANNEL);
+    lockChannel.onmessage = (ev) => {
+      if (ev.data?.type === "release") {
+        void releaseSppRuntime();
+      }
+    };
+  } catch {
+    /* ignore */
+  }
+}
 
 async function loadJson<T>(url: string): Promise<T> {
   const res = await fetch(url);
@@ -38,6 +77,7 @@ async function loadJson<T>(url: string): Promise<T> {
 }
 
 async function bootSharedRuntime(): Promise<SharedRuntime> {
+  ensureLockListener();
   const spp = await import("stellar-private-payments");
   await spp.default();
 
@@ -51,52 +91,87 @@ async function bootSharedRuntime(): Promise<SharedRuntime> {
     (typeof contractConfig.networkPassphrase === "string" && contractConfig.networkPassphrase) ||
     "Test SDF Network ; September 2015";
 
-  // One OPFS DB handle for the whole tab — a second Storage.open() panics.
-  const storage = await spp.Storage.open({
-    workerUrl: sppAssetUrls.storageWorkerUrl,
-  });
-
   const bootnodeUrl =
     process.env.NEXT_PUBLIC_SPP_BOOTNODE_URL?.trim() || SPP_DEFAULT_BOOTNODE_URL;
 
-  const client = await spp.Client.new({
-    rpcUrl,
-    storage,
-    contractConfig: contractConfig as never,
-    circuitsBaseUrl: sppAssetUrls.circuitsBaseUrl,
-    circuitLock: circuitLock as never,
-    storageWorkerUrl: sppAssetUrls.storageWorkerUrl,
-    proverWorkerUrl: sppAssetUrls.proverWorkerUrl,
-    bootnodeUrl,
-  });
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= 6; attempt++) {
+    try {
+      // One OPFS DB handle for the whole tab — a second Storage.open() panics.
+      const storage = await spp.Storage.open({
+        workerUrl: sppAssetUrls.storageWorkerUrl,
+      });
 
-  await client.backgroundSync();
-  return { client, networkPassphrase, rpcUrl };
+      const client = await spp.Client.new({
+        rpcUrl,
+        storage,
+        contractConfig: contractConfig as never,
+        circuitsBaseUrl: sppAssetUrls.circuitsBaseUrl,
+        circuitLock: circuitLock as never,
+        storageWorkerUrl: sppAssetUrls.storageWorkerUrl,
+        proverWorkerUrl: sppAssetUrls.proverWorkerUrl,
+        bootnodeUrl,
+      });
+
+      await client.backgroundSync();
+      return { client, networkPassphrase, rpcUrl };
+    } catch (e) {
+      lastErr = e;
+      if (!isSppLockError(e) || attempt === 6) break;
+      signalOtherTabsToReleaseSpp();
+      await releaseSppRuntime();
+      await sleep(500 * attempt);
+    }
+  }
+
+  throw lastErr instanceof Error
+    ? lastErr
+    : new Error(
+        "Another tab is using Veilpay’s SPP database. Close other Veilpay / Private pay / Stealth tabs, wait 2s, then reload.",
+      );
 }
 
-/** Shared Client + Storage for this tab (lazy). */
+/** Shared Client + Storage for this tab (lazy). Failed boots are not cached. */
 export function getSharedSppRuntime() {
-  if (!sharedBoot) sharedBoot = bootSharedRuntime();
+  ensureLockListener();
+  if (!sharedBoot) {
+    sharedBoot = bootSharedRuntime().catch((e) => {
+      sharedBoot = null;
+      throw e;
+    });
+  }
   return sharedBoot;
 }
 
-/** Drop the shared runtime so the next call re-opens OPFS (e.g. after fatal storage errors). */
-export function resetSharedSppRuntime() {
-  void sharedBoot
-    ?.then((rt) => {
-      try {
-        rt.client.stopBackgroundSync?.();
-      } catch {
-        /* ignore */
-      }
-      try {
-        rt.client.dispose?.();
-      } catch {
-        /* ignore */
-      }
-    })
-    .catch(() => undefined);
+/**
+ * Fully stop background sync + dispose the WASM client and wait for the
+ * OPFS sync access handle to release. Safe to call when boot never succeeded.
+ */
+export async function releaseSppRuntime(): Promise<void> {
+  const pending = sharedBoot;
   sharedBoot = null;
+  if (!pending) return;
+  try {
+    const rt = await pending;
+    try {
+      rt.client.stopBackgroundSync?.();
+    } catch {
+      /* ignore */
+    }
+    try {
+      rt.client.dispose?.();
+    } catch {
+      /* ignore */
+    }
+  } catch {
+    /* previous boot failed — nothing to dispose */
+  }
+  await sleep(900);
+}
+
+/** @deprecated use releaseSppRuntime — kept for call sites that fire-and-forget */
+export function resetSharedSppRuntime() {
+  void releaseSppRuntime();
 }
 
 /** Normalize 0x-hex for SPP key comparisons. */
@@ -118,16 +193,11 @@ export function sppKeysMatch(
 /**
  * Tear down the WASM client and delete SPP OPFS / localStorage so the next
  * `createSppClient` re-derives Freighter privacy keys from scratch.
- * Privacy keys are deterministic (SEP-53 sign of the v2 KDF message) — a clean
- * re-derive should match the on-chain registry when it was registered the same way.
- *
- * sqlite-wasm OPFS uses opaque sahpool directory names — delete the whole
- * origin OPFS tree, not just paths matching /spp/.
  */
 export async function wipeSppLocalWallet(): Promise<void> {
-  resetSharedSppRuntime();
-  // Worker must release the sync access handle before OPFS removes succeed.
-  await new Promise((r) => setTimeout(r, 600));
+  signalOtherTabsToReleaseSpp();
+  await sleep(300);
+  await releaseSppRuntime();
 
   try {
     const root = await navigator.storage.getDirectory();
@@ -137,15 +207,12 @@ export async function wipeSppLocalWallet(): Promise<void> {
       toRemove.push(name);
     }
     for (const name of toRemove) {
-      try {
-        await root.removeEntry(name, { recursive: true });
-      } catch {
-        /* retry once after another pause (handle still releasing) */
-        await new Promise((r) => setTimeout(r, 400));
+      for (let tryN = 0; tryN < 3; tryN++) {
         try {
           await root.removeEntry(name, { recursive: true });
+          break;
         } catch {
-          /* ignore */
+          await sleep(400 * (tryN + 1));
         }
       }
     }
@@ -179,6 +246,9 @@ export async function wipeSppLocalWallet(): Promise<void> {
   } catch {
     /* ignore */
   }
+
+  // Extra settle time so the next Storage.open() does not race a dying worker.
+  await sleep(700);
 }
 
 export async function createSppClient(opts?: {
@@ -189,7 +259,22 @@ export async function createSppClient(opts?: {
   signer?: import("stellar-private-payments").WalletSigner;
 }) {
   const { FreighterSigner } = await import("stellar-private-payments/freighter");
-  const { client, networkPassphrase, rpcUrl } = await getSharedSppRuntime();
+
+  let client: SharedRuntime["client"];
+  let networkPassphrase: string;
+  let rpcUrl: string;
+  try {
+    ({ client, networkPassphrase, rpcUrl } = await getSharedSppRuntime());
+  } catch (e) {
+    if (isSppLockError(e)) {
+      signalOtherTabsToReleaseSpp();
+      await releaseSppRuntime();
+      await sleep(1000);
+      ({ client, networkPassphrase, rpcUrl } = await getSharedSppRuntime());
+    } else {
+      throw e;
+    }
+  }
 
   const signer = opts?.signer ?? new FreighterSigner();
   const account = await client.account(
