@@ -161,8 +161,9 @@ function PollarCashOutInner({
       toast.info("Sign in to Pollar first, then complete KYC");
       return;
     }
+    // App-level KYC (Integrations → KYC) is optional. Pollar Sandbox Sell ARS is
+    // HOSTED SEP-24 — identity + bank details run inside the ramp widget.
     openKycModal({
-      country: "AR",
       onApproved: () => toast.success("KYC approved — you can cash out"),
     });
   };
@@ -325,11 +326,22 @@ function PollarCashOutInner({
         <section className="panel flex flex-col gap-2 p-3">
           <h2 className="display text-lg leading-none tracking-tight">2 · KYC</h2>
           <p className="text-xs leading-snug text-[var(--cream-dim)]">
-            Sandbox identity before bank payout. Ramp may prompt again if needed.
+            Sandbox verifies inside <strong>Cash out</strong> (hosted). Standalone
+            providers need Dashboard → Integrations → KYC.
           </p>
-          <button type="button" className="btn btn-amber !py-1.5 text-sm" onClick={runKyc}>
-            Pass KYC
-          </button>
+          <div className="flex flex-wrap gap-1.5">
+            <button type="button" className="btn btn-ghost !py-1.5 text-xs" onClick={runKyc}>
+              App KYC
+            </button>
+            <button
+              type="button"
+              className="btn btn-amber flex-1 !py-1.5 text-sm"
+              onClick={runOfframp}
+              disabled={!routesReady && isAuthenticated}
+            >
+              Verify in cash out
+            </button>
+          </div>
         </section>
 
         <section className="panel flex flex-col gap-2 p-3">
