@@ -314,11 +314,11 @@ export default function ConfidentialPage() {
         </div>
       )}
 
-      {!address ? (
-        <p className="text-[var(--amber)]">Connect Freighter on Testnet in the header.</p>
-      ) : (
-        <div className="grid gap-6 lg:grid-cols-2">
-          <div className="space-y-4">
+      <div className="grid gap-6 lg:grid-cols-2">
+        <div className="space-y-4">
+          {!address ? (
+            <p className="text-[var(--amber)]">Connect Freighter on Testnet in the header.</p>
+          ) : (
             <div className="panel space-y-4 p-5">
               <p className="text-sm text-[var(--cream-dim)]">
                 Account{" "}
@@ -442,43 +442,45 @@ export default function ConfidentialPage() {
                 />
               </button>
             </div>
-          </div>
+          )}
+        </div>
 
-          <div className="panel h-fit space-y-4 p-5">
-            <p className="text-sm text-[var(--cream-dim)]">On-chain solvency (pool)</p>
-            <CoverageTrafficLight
-              ratio={
-                solvency == null
-                  ? null
-                  : solvency.coverage_bps === 0
-                    ? 0
-                    : solvency.coverage_bps >= 0xffff_ffff
-                      ? Number.POSITIVE_INFINITY
-                      : solvency.coverage_bps / 10_000
-              }
-              panicHalt={solvency?.panic_halt}
-            />
-            <div className="grid grid-cols-2 gap-3 text-sm">
-              <div>
-                <p className="text-[var(--cream-dim)]">Assets B</p>
-                <p className="display text-2xl">{solvency?.assets ?? "—"} XLM</p>
-              </div>
-              <div>
-                <p className="text-[var(--cream-dim)]">Liabilities L</p>
-                <p className="display text-2xl">{solvency?.liabilities ?? "—"} XLM</p>
-              </div>
-              <div>
-                <p className="text-[var(--cream-dim)]">Panic</p>
-                <p className="display text-2xl">
-                  {solvency == null ? "—" : solvency.panic_halt ? "HALT" : "open"}
-                </p>
-              </div>
+        <div className="panel h-fit space-y-4 p-5">
+          <p className="text-sm text-[var(--cream-dim)]">On-chain solvency (pool)</p>
+          <CoverageTrafficLight
+            ratio={
+              solvency == null
+                ? null
+                : solvency.coverage_bps === 0
+                  ? 0
+                  : solvency.coverage_bps >= 0xffff_ffff
+                    ? Number.POSITIVE_INFINITY
+                    : solvency.coverage_bps / 10_000
+            }
+            panicHalt={solvency?.panic_halt}
+          />
+          <div className="grid grid-cols-2 gap-3 text-sm">
+            <div>
+              <p className="text-[var(--cream-dim)]">Assets B</p>
+              <p className="display text-2xl">{solvency?.assets ?? "—"} XLM</p>
             </div>
-            <Link className="text-sm text-[var(--mint)] underline" href="/app/payroll">
-              Payroll demo ledger →
-            </Link>
+            <div>
+              <p className="text-[var(--cream-dim)]">Liabilities L</p>
+              <p className="display text-2xl">{solvency?.liabilities ?? "—"} XLM</p>
+            </div>
+            <div>
+              <p className="text-[var(--cream-dim)]">Panic</p>
+              <p className="display text-2xl">
+                {solvency == null ? "—" : solvency.panic_halt ? "HALT" : "open"}
+              </p>
+            </div>
           </div>
+          <Link className="text-sm text-[var(--mint)] underline" href="/app/payroll">
+            Payroll demo ledger →
+          </Link>
+        </div>
 
+        {address ? (
           <div className="grid gap-4 sm:grid-cols-2 lg:col-span-2">
             <div className="panel space-y-3 p-5">
               <h2 className="display text-xl">3. Confidential transfer</h2>
@@ -579,8 +581,8 @@ export default function ConfidentialPage() {
               </div>
             </div>
           </div>
-        </div>
-      )}
+        ) : null}
+      </div>
 
       {log.length > 0 && (
         <div className="panel p-4">

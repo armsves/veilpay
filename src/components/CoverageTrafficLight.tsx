@@ -2,7 +2,6 @@
 
 import clsx from "clsx";
 import { useEffect, useState } from "react";
-import { CONFIDENTIAL_TOKEN_ID } from "@/lib/confidential/config";
 
 export type CoverageTrafficLightProps = {
   /** B/L ratio. `1` = fully covered. `null` = unknown. `Infinity` = no liabilities. */
@@ -11,7 +10,7 @@ export type CoverageTrafficLightProps = {
   panicHalt?: boolean;
   /** Compact = horizontal lamps only. */
   compact?: boolean;
-  /** Override on-chain invocation count (else fetched from Stellar Expert). */
+  /** Override on-chain invocation count (else fetched via /api/confidential/stats). */
   txCount?: number | null;
   className?: string;
 };
@@ -28,9 +27,8 @@ function useTokenInvocations(override?: number | null) {
     }
     let cancelled = false;
     const load = () => {
-      fetch(
-        `https://api.stellar.expert/explorer/testnet/contract/${CONFIDENTIAL_TOKEN_ID}`,
-      )
+      // Same-origin — works under COEP on /app/confidential (Expert is blocked).
+      fetch("/api/confidential/stats")
         .then((r) => (r.ok ? r.json() : null))
         .then((d: { invocations?: number } | null) => {
           if (!cancelled && typeof d?.invocations === "number") setCount(d.invocations);
@@ -142,11 +140,13 @@ export function CoverageTrafficLight({
   const txLabel =
     txCount == null ? null : (
       <span
-        className="tabular-nums text-[var(--cream-dim)]"
+        className="inline-flex items-baseline gap-1 tabular-nums text-[var(--cream)]"
         title="On-chain confidential token invocations"
       >
-        <span className="display text-inherit">{txCount}</span>
-        <span className="ml-1 text-[10px] uppercase tracking-wider">txs</span>
+        <span className={clsx("display leading-none", compact ? "text-lg" : "text-3xl")}>
+          {txCount}
+        </span>
+        <span className="text-[10px] uppercase tracking-wider text-[var(--cream-dim)]">txs</span>
       </span>
     );
 
@@ -174,20 +174,20 @@ export function CoverageTrafficLight({
       {lamps}
       <div>
         <p className="text-sm text-[var(--cream-dim)]">Coverage ratio</p>
-        <p
-          className={clsx(
-            "display text-3xl leading-tight",
-            level === "green" && "text-[var(--ok)]",
-            level === "amber" && "text-[var(--amber)]",
-            level === "red" && "text-[var(--danger)]",
-          )}
-        >
-          {label}
-        </p>
-        <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--cream-dim)]">
-          <span>{levelHint(level, ratio, panicHalt)}</span>
+        <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
+          <p
+            className={clsx(
+              "display text-3xl leading-tight",
+              level === "green" && "text-[var(--ok)]",
+              level === "amber" && "text-[var(--amber)]",
+              level === "red" && "text-[var(--danger)]",
+            )}
+          >
+            {label}
+          </p>
           {txLabel}
-        </p>
+        </div>
+        <p className="mt-1 text-xs text-[var(--cream-dim)]">{levelHint(level, ratio, panicHalt)}</p>
       </div>
     </div>
   );
