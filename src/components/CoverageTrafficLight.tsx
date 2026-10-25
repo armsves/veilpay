@@ -3,25 +3,30 @@
 import clsx from "clsx";
 
 export type CoverageTrafficLightProps = {
-  /** B/L ratio. `1` = fully covered (green). `null` = unknown. `Infinity` = no liabilities. */
+  /** B/L ratio. `1` = fully covered. `null` = unknown. `Infinity` = no liabilities. */
   ratio: number | null;
-  /** Panic halt overrides to red. */
+  /** Pool panic halt (force_panic / halt_if_insolvent). */
   panicHalt?: boolean;
   /** Compact = horizontal lamps only. */
   compact?: boolean;
   className?: string;
 };
 
+/**
+ * Traffic light for pool solvency:
+ * - green  — ratio ≥ 1 and not halted
+ * - amber  — WouldUnbalance / halted while still covered, or undercovered before halt
+ * - red    — ratio < 1 AND halted
+ */
 export function coverageLevel(
   ratio: number | null,
   panicHalt?: boolean,
 ): "red" | "amber" | "green" | "off" {
-  if (panicHalt) return "red";
   if (ratio == null || Number.isNaN(ratio)) return "off";
-  if (!Number.isFinite(ratio)) return "green"; // L = 0
-  if (ratio >= 1) return "green";
-  if (ratio >= 0.95) return "amber";
-  return "red";
+  const covered = !Number.isFinite(ratio) || ratio >= 1;
+  if (!covered && panicHalt) return "red";
+  if (panicHalt || !covered) return "amber";
+  return "green";
 }
 
 export function formatCoverageRatio(ratio: number | null): string {
@@ -30,8 +35,33 @@ export function formatCoverageRatio(ratio: number | null): string {
   return `${ratio.toFixed(2)}×`;
 }
 
+function levelLabel(ratio: number | null, panicHalt: boolean | undefined, level: ReturnType<typeof coverageLevel>) {
+  if (level === "red" || (level === "amber" && panicHalt)) return "HALT";
+  return formatCoverageRatio(ratio);
+}
+
+function levelHint(
+  level: ReturnType<typeof coverageLevel>,
+  ratio: number | null,
+  panicHalt?: boolean,
+) {
+  const covered = ratio != null && !Number.isNaN(ratio) && (!Number.isFinite(ratio) || ratio >= 1);
+  switch (level) {
+    case "green":
+      return "Ratio ≥ 1 · not halted";
+    case "amber":
+      if (panicHalt && covered) return "WouldUnbalance · halted";
+      if (!covered) return "Unbalance · ratio < 1";
+      return "WouldUnbalance · halted";
+    case "red":
+      return "Unbalance · ratio < 1 · halted";
+    default:
+      return "Awaiting pool state";
+  }
+}
+
 /**
- * Traffic light for pool coverage. Green at ratio ≥ 1 (B ≥ L).
+ * Traffic light for pool coverage (confidential + payroll).
  */
 export function CoverageTrafficLight({
   ratio,
@@ -40,7 +70,7 @@ export function CoverageTrafficLight({
   className,
 }: CoverageTrafficLightProps) {
   const level = coverageLevel(ratio, panicHalt);
-  const label = panicHalt ? "PANIC" : formatCoverageRatio(ratio);
+  const label = levelLabel(ratio, panicHalt, level);
 
   const lamps = (
     <div
@@ -104,17 +134,7 @@ export function CoverageTrafficLight({
         >
           {label}
         </p>
-        <p className="mt-1 text-xs text-[var(--cream-dim)]">
-          {level === "green"
-            ? "B ≥ L · solvent"
-            : level === "amber"
-              ? "Near floor · watch"
-              : level === "red"
-                ? panicHalt
-                  ? "Panic halt"
-                  : "B < L · undercovered"
-                : "Awaiting pool state"}
-        </p>
+        <p className="mt-1 text-xs text-[var(--cream-dim)]">{levelHint(level, ratio, panicHalt)}</p>
       </div>
     </div>
   );

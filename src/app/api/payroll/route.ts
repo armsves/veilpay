@@ -7,13 +7,7 @@ export async function GET() {
   const svc = getPayrollService();
   const snap = svc.coverage();
   return NextResponse.json({
-    solvency: {
-      ...snap,
-      assets: snap.assets.toString(),
-      liabilities: snap.liabilities.toString(),
-      assetsUsdc: formatUsdc(snap.assets),
-      liabilitiesUsdc: formatUsdc(snap.liabilities),
-    },
+    solvency: serializeSnap(snap),
     employees: svc.employees.map((e) => ({
       ...e,
       confidentialBalance: e.confidentialBalance.toString(),
@@ -58,7 +52,7 @@ export async function POST(req: Request) {
           const raw = veilName || displayName || "";
           const name = normalizeName(raw);
           const registry = getVeilNameRegistry();
-          if (!registry.get(name)) {
+          if (!(await registry.getAsync(name))) {
             return NextResponse.json(
               {
                 ok: false,
@@ -68,7 +62,7 @@ export async function POST(req: Request) {
             );
           }
           // Fresh one-time stealth address (not the Freighter owner).
-          const { record, payment } = registry.resolve(name);
+          const { record, payment } = await registry.resolve(name);
           veilName = record.name;
           ownerAddress = record.owner;
           stellarAddress = payment.stealthAddress;
@@ -114,7 +108,7 @@ export async function POST(req: Request) {
             { status: 400 },
           );
         }
-        const { record, payment } = getVeilNameRegistry().resolve(emp.veilName);
+        const { record, payment } = await getVeilNameRegistry().resolve(emp.veilName);
         emp.ownerAddress = record.owner;
         const updated = svc.setStealthAddress(emp.id, payment.stealthAddress);
         return NextResponse.json({
@@ -205,12 +199,17 @@ export async function POST(req: Request) {
 }
 
 function serializeSnap(snap: ReturnType<ConfidentialPayrollService["coverage"]>) {
+  // JSON.stringify turns Infinity into null — keep a finite sentinel for L=0.
+  const coverage = Number.isFinite(snap.coverage) ? snap.coverage : null;
   return {
     ...snap,
     assets: snap.assets.toString(),
     liabilities: snap.liabilities.toString(),
     assetsUsdc: formatUsdc(snap.assets),
     liabilitiesUsdc: formatUsdc(snap.liabilities),
+    coverage,
+    /** true when L=0 (fully covered / no liabilities) */
+    coverageInfinite: !Number.isFinite(snap.coverage),
   };
 }
 

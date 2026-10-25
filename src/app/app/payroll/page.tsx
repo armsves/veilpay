@@ -1,11 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { toast } from "react-toastify";
 import { CoverageTrafficLight } from "@/components/CoverageTrafficLight";
 import { useWallet } from "@/components/WalletProvider";
 import { OpenPollarRamp } from "@/components/OpenPollarRamp";
 import { loadLocalRoster, saveLocalRoster } from "@/lib/confidential/payroll-local";
+import { readSolvency } from "@/lib/confidential/session";
 import { createSppClient, stroopsToXlm, xlmToStroops, type SppSession } from "@/lib/spp/session";
 
 type Employee = {
@@ -18,6 +20,8 @@ type Employee = {
   ownerAddress?: string;
   confidentialBalanceUsdc: string;
   lastSppPayXlm?: string;
+  /** Owner has registered SPP privacy keys (Private pay → Connect). */
+  sppRegistered?: boolean | null;
 };
 
 function sppLookupAddress(e: Employee): string {
@@ -27,14 +31,60 @@ function sppLookupAddress(e: Employee): string {
 type Solvency = {
   assetsUsdc: string;
   liabilitiesUsdc: string;
-  coverage: number;
+  /** Finite B/L, or null when L=0 (see coverageInfinite). */
+  coverage: number | null;
+  /** L=0 — JSON cannot carry Infinity. */
+  coverageInfinite?: boolean;
   panicHalt: boolean;
 };
+
+type OnchainSolvency = {
+  assets: string;
+  liabilities: string;
+  coverage_bps: number;
+  panic_halt: boolean;
+};
+
+/** Prefer B/L numbers — JSON nulls Infinity when L=0. */
+function solvencyRatio(s: Solvency | null): number | null {
+  if (!s) return null;
+  const L = Number.parseFloat(s.liabilitiesUsdc);
+  const B = Number.parseFloat(s.assetsUsdc);
+  if (Number.isFinite(L) && Number.isFinite(B)) {
+    if (L === 0) return Number.POSITIVE_INFINITY;
+    return B / L;
+  }
+  if (s.coverageInfinite) return Number.POSITIVE_INFINITY;
+  if (s.coverage != null && Number.isFinite(s.coverage)) return s.coverage;
+  return null;
+}
+
+function onchainRatio(s: OnchainSolvency | null): number | null {
+  if (!s) return null;
+  if (s.coverage_bps === 0) return 0;
+  if (s.coverage_bps >= 0xffff_ffff) return Number.POSITIVE_INFINITY;
+  return s.coverage_bps / 10_000;
+}
+
+function formatStroopsXlm(stroops: string): string {
+  try {
+    return stroopsToXlm(BigInt(stroops));
+  } catch {
+    return stroops;
+  }
+}
 
 export default function PayrollPage() {
   const wallet = useWallet();
   const [employees, setEmployees] = useState<Employee[]>([]);
-  const [solvency, setSolvency] = useState<Solvency | null>(null);
+  const [solvency, setSolvency] = useState<Solvency | null>({
+    assetsUsdc: "0",
+    liabilitiesUsdc: "0",
+    coverage: null,
+    coverageInfinite: true,
+    panicHalt: false,
+  });
+  const [onchain, setOnchain] = useState<OnchainSolvency | null>(null);
   const [veilInput, setVeilInput] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [fundAmount, setFundAmount] = useState("5000");
@@ -46,9 +96,18 @@ export default function PayrollPage() {
   const [sppBalance, setSppBalance] = useState<string>("—");
   const [busy, setBusy] = useState(false);
   const [log, setLog] = useState<string[]>([]);
+  /** Freighter address the current SPP session was opened for. */
+  const sppForAddress = useRef<string | null>(null);
+  const sppConnecting = useRef(false);
 
   const push = useCallback((line: string) => {
     setLog((prev) => [line, ...prev].slice(0, 14));
+  }, []);
+
+  const notify = useCallback((ok: boolean, text: string) => {
+    setStatus({ ok, text });
+    if (ok) toast.success(text);
+    else toast.error(text);
   }, []);
 
   const persistRoster = useCallback((list: Employee[]) => {
@@ -121,9 +180,77 @@ export default function PayrollPage() {
     }
   }, [persistRoster, selected]);
 
+  const refreshOnchain = useCallback(async () => {
+    try {
+      const v = await readSolvency();
+      setOnchain({
+        assets: formatStroopsXlm(v.assets.toString()),
+        liabilities: formatStroopsXlm(v.liabilities.toString()),
+        coverage_bps: v.coverage_bps,
+        panic_halt: v.panic_halt,
+      });
+    } catch {
+      setOnchain(null);
+    }
+  }, []);
+
   useEffect(() => {
     void refresh();
-  }, [refresh]);
+    void refreshOnchain();
+  }, [refresh, refreshOnchain]);
+
+  const connectSpp = useCallback(async (opts?: { silent?: boolean }) => {
+    const address = wallet.address;
+    if (!address) {
+      if (!opts?.silent) notify(false, "Connect Freighter on Testnet first");
+      return;
+    }
+    if (sppConnecting.current) return;
+    if (sppForAddress.current === address) return;
+
+    sppConnecting.current = true;
+    setBusy(true);
+    if (!opts?.silent) setStatus(null);
+    push("Connecting SPP pool (employer treasury)…");
+    try {
+      const s = await createSppClient({ userAddress: address });
+      setSpp(s);
+      sppForAddress.current = address;
+      await s.client.sync();
+      const b = await s.pool.balance();
+      setSppBalance(stroopsToXlm(b));
+      push(`SPP shielded balance ${stroopsToXlm(b)} XLM`);
+      if (opts?.silent) {
+        setStatus({ ok: true, text: "SPP connected" });
+        toast.info(`SPP ready · ${stroopsToXlm(b)} XLM shielded`);
+      } else {
+        notify(true, "SPP connected");
+      }
+    } catch (e) {
+      setSpp(null);
+      sppForAddress.current = null;
+      setSppBalance("—");
+      if (!opts?.silent) {
+        notify(false, e instanceof Error ? e.message : String(e));
+      } else {
+        push(`SPP auto-connect failed: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    } finally {
+      sppConnecting.current = false;
+      setBusy(false);
+    }
+  }, [wallet.address, push, notify]);
+
+  // Auto-connect SPP once Freighter is ready; reconnect on account switch.
+  useEffect(() => {
+    if (!wallet.address) {
+      setSpp(null);
+      sppForAddress.current = null;
+      setSppBalance("—");
+      return;
+    }
+    void connectSpp({ silent: true });
+  }, [wallet.address, connectSpp]);
 
   async function act(action: string, extra: Record<string, unknown> = {}) {
     setStatus(null);
@@ -134,11 +261,14 @@ export default function PayrollPage() {
     });
     const data = await res.json();
     if (!data.ok) {
-      setStatus({ ok: false, text: `${data.code ?? "ERROR"}: ${data.error}` });
+      notify(false, `${data.code ?? "ERROR"}: ${data.error}`);
       if (data.solvency) setSolvency(data.solvency);
       return data;
     }
-    setStatus({ ok: true, text: action.replaceAll("_", " ") });
+    // Quiet for internal pay bookkeeping — callers toast the user-facing result.
+    if (action !== "mark_spp_paid" && action !== "pay" && action !== "fresh_stealth") {
+      notify(true, action.replaceAll("_", " "));
+    }
     if (data.solvency) setSolvency(data.solvency);
     if (data.plan) {
       const fiat = data.plan.pollar?.corridor?.fiat ?? "ARS";
@@ -180,36 +310,13 @@ export default function PayrollPage() {
   async function addByVeil() {
     const raw = veilInput.trim();
     if (!raw) {
-      setStatus({ ok: false, text: "Enter a .veil name (e.g. alice)" });
+      notify(false, "Enter a .veil name (e.g. alice)");
       return;
     }
     await act("add_employee", {
       veilName: raw,
       name: displayName.trim() || undefined,
     });
-  }
-
-  async function connectSpp() {
-    if (!wallet.address) {
-      setStatus({ ok: false, text: "Connect Freighter on Testnet first" });
-      return;
-    }
-    setBusy(true);
-    setStatus(null);
-    push("Connecting SPP pool (employer treasury)…");
-    try {
-      const s = await createSppClient({ userAddress: wallet.address });
-      setSpp(s);
-      await s.client.sync();
-      const b = await s.pool.balance();
-      setSppBalance(stroopsToXlm(b));
-      push(`SPP shielded balance ${stroopsToXlm(b)} XLM`);
-      setStatus({ ok: true, text: "SPP connected" });
-    } catch (e) {
-      setStatus({ ok: false, text: e instanceof Error ? e.message : String(e) });
-    } finally {
-      setBusy(false);
-    }
   }
 
   async function refreshSpp() {
@@ -220,12 +327,47 @@ export default function PayrollPage() {
       const b = await spp.pool.balance();
       setSppBalance(stroopsToXlm(b));
       push(`SPP balance ${stroopsToXlm(b)} XLM`);
+      void refreshOnchain();
     } catch (e) {
-      setStatus({ ok: false, text: e instanceof Error ? e.message : String(e) });
+      notify(false, e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
   }
+
+  /** Look up whether each employee's owner has SPP keys registered. */
+  const checkSppRegistration = useCallback(
+    async (list: Employee[], session: SppSession) => {
+      try {
+        await session.client.sync();
+      } catch {
+        /* best-effort */
+      }
+      const updated: Employee[] = [];
+      for (const e of list) {
+        const owner = sppLookupAddress(e);
+        if (!owner.startsWith("G")) {
+          updated.push({ ...e, sppRegistered: false });
+          continue;
+        }
+        try {
+          const lookup = await session.client.recipientLookup(owner);
+          updated.push({ ...e, sppRegistered: Boolean(lookup?.entry) });
+        } catch {
+          updated.push({ ...e, sppRegistered: false });
+        }
+      }
+      persistRoster(updated);
+      return updated;
+    },
+    [persistRoster],
+  );
+
+  useEffect(() => {
+    if (!spp || employees.length === 0) return;
+    if (employees.every((e) => e.sppRegistered != null)) return;
+    void checkSppRegistration(employees, spp);
+  }, [spp, employees, checkSppRegistration]);
 
   async function mintFreshStealth(emp: Employee): Promise<Employee> {
     if (!emp.veilName) return emp;
@@ -248,7 +390,7 @@ export default function PayrollPage() {
   async function paySelectedViaSpp() {
     const emp0 = employees.find((e) => e.id === selected);
     if (!emp0 || !spp) {
-      setStatus({ ok: false, text: "Select an employee and Connect SPP first" });
+      notify(false, "Select an employee and wait for SPP to connect");
       return;
     }
     setBusy(true);
@@ -257,31 +399,34 @@ export default function PayrollPage() {
       const emp = await mintFreshStealth(emp0);
       const stroops = xlmToStroops(payAmount);
       const owner = sppLookupAddress(emp);
-      push(`Looking up SPP keys for ${emp.veilName ? `${emp.veilName}.veil` : emp.name}…`);
+      const label = emp.veilName ? `${emp.veilName}.veil` : emp.name;
+      push(`Looking up SPP keys for ${label}…`);
+      await spp.client.sync();
       const lookup = await spp.client.recipientLookup(owner);
       if (!lookup?.entry) {
+        persistRoster(
+          employees.map((e) => (e.id === emp.id ? { ...e, ...emp, sppRegistered: false } : e)),
+        );
         throw new Error(
-          `${emp.veilName ? `${emp.veilName}.veil` : emp.name} owner must open Private pay → Connect SPP once to register keys`,
+          `${label} is not SPP-registered — that wallet must open Private pay → Connect SPP once`,
         );
       }
-      push(
-        `Private SPP pay ${payAmount} XLM → ${emp.veilName ? `${emp.veilName}.veil` : emp.name} (stealth ${emp.stellarAddress.slice(0, 6)}…)`,
-      );
-      // Encrypt to the owner's registered SPP keys (amount hidden); roster shows fresh stealth.
+      push(`Private SPP pay ${payAmount} XLM → ${label}`);
       await spp.pool.transferToKeys(lookup.entry.noteKey, lookup.entry.encryptionKey, stroops);
       await act("mark_spp_paid", { employeeId: emp.id, xlmAmount: payAmount });
-      // Also credit confidential demo ledger for solvency story
       await act("pay", { employeeId: emp.id, amount: payAmount });
       await refreshSpp();
       push("SPP private transfer confirmed (amount hidden on-chain)");
-      setStatus({ ok: true, text: `Paid ${payAmount} XLM privately to ${emp.name}` });
+      notify(true, `Paid ${payAmount} XLM privately to ${label}`);
       persistRoster(
         employees.map((e) =>
-          e.id === emp.id ? { ...e, ...emp, lastSppPayXlm: payAmount } : e,
+          e.id === emp.id
+            ? { ...e, ...emp, lastSppPayXlm: payAmount, sppRegistered: true }
+            : e,
         ),
       );
     } catch (e) {
-      setStatus({ ok: false, text: e instanceof Error ? e.message : String(e) });
+      notify(false, e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
@@ -289,20 +434,26 @@ export default function PayrollPage() {
 
   async function runPayrollAllViaSpp() {
     if (!spp || employees.length === 0) {
-      setStatus({ ok: false, text: "Connect SPP and add employees first" });
+      notify(false, "Connect SPP and add employees first");
       return;
     }
     setBusy(true);
     setStatus(null);
     let okCount = 0;
+    const skipped: string[] = [];
     const next = [...employees];
     try {
+      await spp.client.sync();
       for (const emp0 of employees) {
-        push(`Payroll → ${emp0.veilName ? `${emp0.veilName}.veil` : emp0.name}…`);
+        const label = emp0.veilName ? `${emp0.veilName}.veil` : emp0.name;
+        push(`Payroll → ${label}…`);
         const emp = await mintFreshStealth(emp0);
         const lookup = await spp.client.recipientLookup(sppLookupAddress(emp));
         if (!lookup?.entry) {
-          push(`Skip ${emp.name}: not SPP-registered`);
+          push(`Skip ${label}: not SPP-registered`);
+          skipped.push(label);
+          const i = next.findIndex((e) => e.id === emp.id);
+          if (i >= 0) next[i] = { ...next[i], ...emp, sppRegistered: false };
           continue;
         }
         const stroops = xlmToStroops(payAmount);
@@ -310,18 +461,29 @@ export default function PayrollPage() {
         await act("mark_spp_paid", { employeeId: emp.id, xlmAmount: payAmount });
         await act("pay", { employeeId: emp.id, amount: payAmount });
         const i = next.findIndex((e) => e.id === emp.id);
-        if (i >= 0) next[i] = { ...next[i], ...emp, lastSppPayXlm: payAmount };
+        if (i >= 0) {
+          next[i] = { ...next[i], ...emp, lastSppPayXlm: payAmount, sppRegistered: true };
+        }
         okCount += 1;
-        push(`Paid ${payAmount} XLM → ${emp.name}`);
+        push(`Paid ${payAmount} XLM → ${label}`);
       }
       persistRoster(next);
       await refreshSpp();
-      setStatus({
-        ok: okCount > 0,
-        text: `SPP payroll finished: ${okCount}/${employees.length} paid ${payAmount} XLM each`,
-      });
+      if (okCount === 0) {
+        notify(
+          false,
+          `0/${employees.length} paid — ${skipped.join(", ")} must open Private pay → Connect SPP once`,
+        );
+      } else if (skipped.length > 0) {
+        notify(
+          true,
+          `Paid ${okCount}/${employees.length}; skipped ${skipped.join(", ")} (not SPP-registered)`,
+        );
+      } else {
+        notify(true, `SPP payroll finished: ${okCount}/${employees.length} paid ${payAmount} XLM each`);
+      }
     } catch (e) {
-      setStatus({ ok: false, text: e instanceof Error ? e.message : String(e) });
+      notify(false, e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
@@ -346,12 +508,18 @@ export default function PayrollPage() {
 
       <div className="grid shrink-0 grid-cols-2 gap-2 sm:grid-cols-5">
         {[
-          { label: "Assets B", value: solvency?.assetsUsdc ?? "0" },
-          { label: "Liabilities L", value: solvency?.liabilitiesUsdc ?? "0" },
+          {
+            label: "Assets B",
+            value: onchain?.assets ?? solvency?.assetsUsdc ?? "0",
+          },
+          {
+            label: "Liabilities L",
+            value: onchain?.liabilities ?? solvency?.liabilitiesUsdc ?? "0",
+          },
           {
             label: "Halt",
-            value: solvency?.panicHalt ? "PANIC" : "OPEN",
-            danger: Boolean(solvency?.panicHalt),
+            value: (onchain?.panic_halt ?? solvency?.panicHalt) ? "PANIC" : "OPEN",
+            danger: Boolean(onchain?.panic_halt ?? solvency?.panicHalt),
           },
           { label: "SPP XLM", value: sppBalance },
         ].map((m) => (
@@ -369,8 +537,8 @@ export default function PayrollPage() {
         <div className="panel flex items-center px-3 py-2.5">
           <CoverageTrafficLight
             compact
-            ratio={solvency == null ? null : solvency.coverage}
-            panicHalt={solvency?.panicHalt}
+            ratio={onchain ? onchainRatio(onchain) : solvencyRatio(solvency)}
+            panicHalt={onchain?.panic_halt ?? solvency?.panicHalt}
           />
         </div>
       </div>
@@ -384,7 +552,7 @@ export default function PayrollPage() {
                 <button
                   className="btn btn-primary !py-1.5 !px-3 text-xs"
                   disabled={busy || !wallet.address}
-                  onClick={() => void connectSpp()}
+                  onClick={() => void connectSpp({ silent: false })}
                 >
                   {busy ? "…" : "Connect SPP"}
                 </button>
@@ -492,9 +660,12 @@ export default function PayrollPage() {
             </button>
           </div>
           <p className="text-[10px] text-[var(--cream-dim)]">
-            Each add/pay mints a <strong className="font-medium text-[var(--cream)]">fresh stealth G…</strong>{" "}
-            via VNS (never the Freighter owner). SPP still delivers to the owner&apos;s registered pool
-            keys.{" "}
+            Each pay mints a fresh stealth via VNS. SPP delivers to the owner&apos;s pool keys — that
+            wallet must open{" "}
+            <Link className="text-[var(--mint)] underline" href="/app/private-pay">
+              Private pay → Connect SPP
+            </Link>{" "}
+            once.{" "}
             <Link className="text-[var(--mint)] underline" href="/app/stealth">
               Register names
             </Link>{" "}
@@ -533,6 +704,12 @@ export default function PayrollPage() {
                   </span>
                   <span className="shrink-0 text-right text-xs text-[var(--cream-dim)]">
                     <span className="block">{e.confidentialBalanceUsdc} conf.</span>
+                    {e.sppRegistered === true && (
+                      <span className="block text-[var(--ok)]">SPP ready</span>
+                    )}
+                    {e.sppRegistered === false && (
+                      <span className="block text-[var(--amber)]">needs SPP</span>
+                    )}
                     {e.lastSppPayXlm && (
                       <span className="text-[var(--mint)]">last {e.lastSppPayXlm} XLM</span>
                     )}

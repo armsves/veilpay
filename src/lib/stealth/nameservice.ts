@@ -21,6 +21,7 @@ import {
   savePersistedRegistry,
   type PersistedRegistry,
 } from "./vns-persist";
+import { chainGetOwner, chainListNames, chainPutName } from "./vns-chain";
 
 export const VNS_TLD = "veil";
 
@@ -89,37 +90,77 @@ class VeilNameRegistry {
   private byOwner = new Map<string, string>();
   private hydrated = false;
 
+  private ingestRecord(partial: {
+    name: string;
+    owner: string;
+    createdAt?: number;
+    resolveCount?: number;
+    inbox?: StealthAnnouncement[];
+  }) {
+    const name = normalizeName(partial.name);
+    if (this.byName.has(name)) return;
+    const meta = metaForOwner(partial.owner);
+    const record: VeilNameRecord = {
+      name,
+      fqdn: toFqdn(name),
+      owner: partial.owner,
+      meta,
+      createdAt: partial.createdAt ?? Date.now(),
+      resolveCount: partial.resolveCount ?? 0,
+      inbox: partial.inbox ?? [],
+    };
+    this.byName.set(name, record);
+    this.byOwner.set(partial.owner, name);
+  }
+
   private ensureHydrated() {
     if (this.hydrated) return;
     this.hydrated = true;
     const snap = loadPersistedRegistry();
-    if (!snap) return;
-    for (const r of snap.records) {
-      try {
-        const meta = metaForOwner(r.owner);
-        const record: VeilNameRecord = {
-          name: r.name,
-          fqdn: r.fqdn,
-          owner: r.owner,
-          meta,
-          createdAt: r.createdAt,
-          resolveCount: r.resolveCount,
-          inbox: r.inbox.map((a) => ({
-            id: a.id,
-            stealthAddress: a.stealthAddress,
-            ephemeralPubKey: a.ephemeralPubKey,
-            viewTag: a.viewTag,
-            memoHint: a.memoHint,
-            index: a.index ?? (Number(String(a.ephemeralPubKey).replace(/^idx:/, "")) || 0),
-            createdAt: a.createdAt,
-            swept: a.swept,
-          })),
-        };
-        this.byName.set(r.name, record);
-        this.byOwner.set(r.owner, r.name);
-      } catch {
-        /* skip bad row */
+    if (snap) {
+      for (const r of snap.records) {
+        try {
+          this.ingestRecord({
+            name: r.name,
+            owner: r.owner,
+            createdAt: r.createdAt,
+            resolveCount: r.resolveCount,
+            inbox: r.inbox.map((a) => ({
+              id: a.id,
+              stealthAddress: a.stealthAddress,
+              ephemeralPubKey: a.ephemeralPubKey,
+              viewTag: a.viewTag,
+              memoHint: a.memoHint,
+              index: a.index ?? (Number(String(a.ephemeralPubKey).replace(/^idx:/, "")) || 0),
+              createdAt: a.createdAt,
+              swept: a.swept,
+            })),
+          });
+        } catch {
+          /* skip bad row */
+        }
       }
+    }
+    void this.refreshFromChain();
+  }
+
+  /**
+   * Bulk hydrate from chain. RPC cannot enumerate manageData keys, so this is a
+   * no-op list; per-name lookups use {@link getAsync} → chainGetOwner instead.
+   */
+  async refreshFromChain() {
+    try {
+      const rows = await chainListNames();
+      let added = 0;
+      for (const row of rows) {
+        if (!this.byName.has(row.name)) {
+          this.ingestRecord({ name: row.name, owner: row.owner });
+          added += 1;
+        }
+      }
+      if (added > 0) this.persist();
+    } catch {
+      /* chain optional at boot */
     }
   }
 
@@ -159,6 +200,19 @@ class VeilNameRegistry {
     return this.byName.get(name) ?? null;
   }
 
+  /** Async get — falls back to Stellar RPC manageData when RAM/tmp miss. */
+  async getAsync(nameOrFqdn: string): Promise<VeilNameRecord | null> {
+    this.ensureHydrated();
+    const name = normalizeName(nameOrFqdn);
+    const hit = this.byName.get(name);
+    if (hit) return hit;
+    const owner = await chainGetOwner(name);
+    if (!owner) return null;
+    this.ingestRecord({ name, owner });
+    this.persist();
+    return this.byName.get(name) ?? null;
+  }
+
   getByOwner(owner: string): VeilNameRecord | null {
     this.ensureHydrated();
     const name = this.byOwner.get(owner);
@@ -172,8 +226,17 @@ class VeilNameRegistry {
     return !this.byName.has(v.name);
   }
 
-  register(opts: { name: string; owner: string }): VeilNameRecord {
+  async availableAsync(nameOrFqdn: string): Promise<boolean> {
+    const v = validateName(nameOrFqdn);
+    if (!v.ok) return false;
+    if (this.get(v.name)) return false;
+    const onChain = await chainGetOwner(v.name);
+    return !onChain;
+  }
+
+  async register(opts: { name: string; owner: string }): Promise<VeilNameRecord> {
     this.ensureHydrated();
+    await this.refreshFromChain();
     const v = validateName(opts.name);
     if (!v.ok) throw new Error(v.error);
     if (!opts.owner.startsWith("G") || opts.owner.length < 56) {
@@ -183,9 +246,23 @@ class VeilNameRegistry {
     // Idempotent restore after serverless memory wipe / client rehydrate.
     const byName = this.byName.get(v.name);
     if (byName) {
-      if (byName.owner === opts.owner) return byName;
+      if (byName.owner === opts.owner) {
+        // Ensure on-chain copy exists even if RAM was restored from local only
+        void chainPutName(v.name, opts.owner);
+        return byName;
+      }
       throw new Error(`${toFqdn(v.name)} is already taken`);
     }
+    const chainOwner = await chainGetOwner(v.name);
+    if (chainOwner && chainOwner !== opts.owner) {
+      throw new Error(`${toFqdn(v.name)} is already taken`);
+    }
+    if (chainOwner === opts.owner) {
+      this.ingestRecord({ name: v.name, owner: opts.owner });
+      this.persist();
+      return this.byName.get(v.name)!;
+    }
+
     const existingName = this.byOwner.get(opts.owner);
     if (existingName) {
       const existing = this.byName.get(existingName);
@@ -208,16 +285,22 @@ class VeilNameRegistry {
     this.byName.set(v.name, record);
     this.byOwner.set(opts.owner, v.name);
     this.persist();
+
+    const chain = await chainPutName(v.name, opts.owner);
+    if (chain.error && !chain.skipped) {
+      // Keep RAM/tmp record; surface warning via thrown only if claim conflict
+      if (chain.error.includes("already claimed")) throw new Error(chain.error);
+    }
     return record;
   }
 
-  resolve(nameOrFqdn: string): {
+  async resolve(nameOrFqdn: string): Promise<{
     record: VeilNameRecord;
     payment: StealthPayment & { index: number };
     announcement: StealthAnnouncement;
-  } {
+  }> {
     this.ensureHydrated();
-    const record = this.get(nameOrFqdn);
+    const record = (await this.getAsync(nameOrFqdn)) ?? this.get(nameOrFqdn);
     if (!record) throw new Error(`Name not found: ${toFqdn(normalizeName(nameOrFqdn))}`);
     record.resolveCount += 1;
     // Never use resolveCount as the crypto index — serverless memory resets

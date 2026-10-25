@@ -24,9 +24,11 @@ export async function GET(req: Request) {
   if (action === "available" && name) {
     const v = validateName(name);
     if (!v.ok) return NextResponse.json({ ok: true, available: false, error: v.error });
+    await registry.refreshFromChain();
+    const available = await registry.availableAsync(v.name);
     return NextResponse.json({
       ok: true,
-      available: registry.available(v.name),
+      available,
       fqdn: toFqdn(v.name),
     });
   }
@@ -75,7 +77,7 @@ export async function GET(req: Request) {
   }
 
   if (name) {
-    const record = registry.get(name);
+    const record = await registry.getAsync(name);
     if (!record) {
       return NextResponse.json(
         { ok: false, error: `${toFqdn(normalizeName(name))} is not registered` },
@@ -109,14 +111,14 @@ export async function POST(req: Request) {
         if (!body.name || !body.owner) {
           return NextResponse.json({ ok: false, error: "name and owner required" }, { status: 400 });
         }
-        const record = registry.register({ name: body.name, owner: body.owner });
+        const record = await registry.register({ name: body.name, owner: body.owner });
         return NextResponse.json({ ok: true, record: publicRecord(record, true) });
       }
       case "resolve": {
         if (!body.name) {
           return NextResponse.json({ ok: false, error: "name required" }, { status: 400 });
         }
-        const { record, payment, announcement } = registry.resolve(body.name);
+        const { record, payment, announcement } = await registry.resolve(body.name);
         return NextResponse.json({
           ok: true,
           fqdn: record.fqdn,
